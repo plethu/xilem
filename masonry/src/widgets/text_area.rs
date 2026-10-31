@@ -21,7 +21,7 @@ use crate::parley::PlainEditor;
 
 mod history;
 use crate::parley::editing::{Generation, SplitString};
-use crate::properties::{CaretColor, ContentColor, SelectionColor};
+use crate::properties::{CaretColor, ContentColor, SelectionColor, TextAreaLabel};
 use crate::theme::default_text_styles;
 use crate::util::bounding_box_to_rect;
 use crate::util::debug_panic;
@@ -963,6 +963,9 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         CaretColor::prop_changed(ctx, property_type);
         ContentColor::prop_changed(ctx, property_type);
         SelectionColor::prop_changed(ctx, property_type);
+        if property_type == TypeId::of::<TextAreaLabel>() {
+            ctx.request_accessibility_update();
+        }
     }
 
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
@@ -1175,6 +1178,11 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         }
         if !self.placeholder.is_empty() {
             node.set_placeholder(self.placeholder.to_string());
+        }
+
+        let label = props.get::<TextAreaLabel>(ctx.property_cache());
+        if !label.label.is_empty() {
+            node.set_label(label.label.to_string());
         }
 
         let cache = ctx.property_cache();

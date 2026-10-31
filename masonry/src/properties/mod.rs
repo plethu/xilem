@@ -18,6 +18,7 @@ mod scroll_bar;
 mod selection;
 mod slider;
 mod step_input;
+mod text_area_label;
 mod track;
 
 pub mod types;
@@ -35,6 +36,7 @@ pub use scroll_bar::*;
 pub use selection::*;
 pub use slider::*;
 pub use step_input::*;
+pub use text_area_label::*;
 pub use track::*;
 
 pub use masonry_core::properties::*;

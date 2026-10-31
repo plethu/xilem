@@ -16,7 +16,7 @@ use crate::core::{
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{LayoutSize, LenReq, Length};
-use crate::properties::{CaretColor, ContentColor, LineBreaking, PlaceholderColor, SelectionColor};
+use crate::properties::{CaretColor, ContentColor, LineBreaking, PlaceholderColor, SelectionColor, TextAreaLabel};
 use crate::widgets::{Label, TextArea};
 
 /// The text input widget displays text which can be edited by the user,
@@ -165,6 +165,7 @@ impl TextInput {
 impl UsesProperty<CaretColor> for TextInput {}
 impl UsesProperty<PlaceholderColor> for TextInput {}
 impl UsesProperty<SelectionColor> for TextInput {}
+impl UsesProperty<TextAreaLabel> for TextInput {}
 
 // --- MARK: IMPL WIDGET
 impl Widget for TextInput {
@@ -213,6 +214,13 @@ impl Widget for TextInput {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
+        if property_type == TypeId::of::<TextAreaLabel>() {
+            ctx.mutate_self_later(|mut input| {
+                let mut input = input.downcast::<Self>();
+                let label = input.get_prop::<TextAreaLabel>().clone();
+                Self::text_mut(&mut input).insert_prop(label);
+            });
+        }
         // FIXME - Find more elegant way to propagate property to child.
         if property_type == TypeId::of::<CaretColor>() {
             ctx.mutate_self_later(|mut input| {
@@ -241,6 +249,11 @@ impl Widget for TextInput {
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
+                ctx.mutate_self_later(|mut input| {
+                    let mut input = input.downcast::<Self>();
+                    let label = input.get_prop::<TextAreaLabel>().clone();
+                    Self::text_mut(&mut input).insert_prop(label);
+                });
                 // FIXME - Find more elegant way to propagate property to child.
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
