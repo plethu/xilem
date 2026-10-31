@@ -8,7 +8,9 @@ use std::sync::{Arc, mpsc};
 
 use accesskit_winit::Adapter;
 use copypasta::nop_clipboard::NopClipboardContext;
-use copypasta::{ClipboardContext, ClipboardProvider};
+#[cfg(not(target_os = "linux"))]
+use copypasta::ClipboardContext;
+use copypasta::ClipboardProvider;
 use masonry_core::app::{
     RenderRoot, RenderRootOptions, RenderRootSignal, VisualLayerKind, WindowSizePolicy,
 };
@@ -401,15 +403,11 @@ impl MasonryState {
 
         let (signal_sender, signal_receiver) = mpsc::channel::<(WindowId, RenderRootSignal)>();
 
-        let clipboard_cx =
-            ClipboardContext::new().map(|cx| -> Box<dyn ClipboardProvider> { Box::new(cx) });
-        let clipboard_cx = if cfg!(target_os = "linux") {
-            // If we're running on Linux, we might fail to get the clipboard context because
-            // we're using Wayland, so we fall back to NopClipboardContext to be safe.
-            clipboard_cx.unwrap_or_else(|_| Box::new(NopClipboardContext))
-        } else {
-            clipboard_cx.unwrap()
-        };
+        // Wayland needs the event loop's owned display, available when resuming.
+        #[cfg(target_os = "linux")]
+        let clipboard_cx: Box<dyn ClipboardProvider> = Box::new(NopClipboardContext);
+        #[cfg(not(target_os = "linux"))]
+        let clipboard_cx: Box<dyn ClipboardProvider> = Box::new(ClipboardContext::new().unwrap());
 
         Self {
             is_suspended: true,
@@ -487,6 +485,11 @@ impl MasonryState {
         }
 
         self.is_suspended = false;
+        #[cfg(target_os = "linux")]
+        match crate::clipboard::connect(event_loop.owned_display_handle()) {
+            Ok(clipboard) => self.clipboard_cx = clipboard,
+            Err(error) => tracing::warn!(?error, "Unable to initialize clipboard"),
+        }
 
         // Surfaces for existing windows will be recreated on-demand in the redraw method
 
@@ -1083,7 +1086,9 @@ impl MasonryState {
                     handle.set_ime_cursor_area(position, size);
                 }
                 RenderRootSignal::ClipboardStore(text) => {
-                    self.clipboard_cx.set_contents(text).unwrap();
+                    if let Err(error) = self.clipboard_cx.set_contents(text) {
+                        tracing::warn!(?error, "Unable to write clipboard contents");
+                    }
                 }
                 RenderRootSignal::RequestRedraw => {
                     need_redraw.insert(*handle_id);
