@@ -1007,6 +1007,9 @@ impl MasonryState {
         }
 
         self.handle_signals(event_loop, app_driver);
+        if self.exit {
+            event_loop.exit();
+        }
     }
 
     // --- MARK: EMPTY WINIT HANDLERS
