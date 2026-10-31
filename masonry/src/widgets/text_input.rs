@@ -10,13 +10,16 @@ use crate::TextAlign;
 use crate::core::{
     AccessCtx, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget, NoAction, PaintCtx,
     PointerButton, PointerButtonEvent, PointerEvent, PrePaintProps, PropertiesMut, PropertiesRef,
-    RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut,
-    WidgetPod, paint_background, paint_border, paint_box_shadow,
+    RegisterCtx, StyleProperty, TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId,
+    WidgetMut, WidgetPod, paint_background, paint_border, paint_box_shadow,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Point, Size};
 use crate::layout::{LayoutSize, LenReq, Length};
-use crate::properties::{CaretColor, ContentColor, LineBreaking, PlaceholderColor, SelectionColor, TextAreaLabel};
+use crate::properties::{
+    CaretColor, ContentColor, LineBreaking, PlaceholderColor, PlaceholderTextSize, SelectionColor,
+    TextAreaLabel,
+};
 use crate::widgets::{Label, TextArea};
 
 /// The text input widget displays text which can be edited by the user,
@@ -164,6 +167,7 @@ impl TextInput {
 
 impl UsesProperty<CaretColor> for TextInput {}
 impl UsesProperty<PlaceholderColor> for TextInput {}
+impl UsesProperty<PlaceholderTextSize> for TextInput {}
 impl UsesProperty<SelectionColor> for TextInput {}
 impl UsesProperty<TextAreaLabel> for TextInput {}
 
@@ -214,6 +218,16 @@ impl Widget for TextInput {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
+        if property_type == TypeId::of::<PlaceholderTextSize>() {
+            ctx.mutate_self_later(|mut input| {
+                let mut input = input.downcast::<Self>();
+                let size = input.get_prop::<PlaceholderTextSize>().size;
+                Label::insert_style(
+                    &mut Self::placeholder_mut(&mut input),
+                    StyleProperty::FontSize(size),
+                );
+            });
+        }
         if property_type == TypeId::of::<TextAreaLabel>() {
             ctx.mutate_self_later(|mut input| {
                 let mut input = input.downcast::<Self>();
@@ -249,6 +263,14 @@ impl Widget for TextInput {
     fn update(&mut self, ctx: &mut UpdateCtx<'_>, _props: &mut PropertiesMut<'_>, event: &Update) {
         match event {
             Update::WidgetAdded => {
+                ctx.mutate_self_later(|mut input| {
+                    let mut input = input.downcast::<Self>();
+                    let size = input.get_prop::<PlaceholderTextSize>().size;
+                    Label::insert_style(
+                        &mut Self::placeholder_mut(&mut input),
+                        StyleProperty::FontSize(size),
+                    );
+                });
                 ctx.mutate_self_later(|mut input| {
                     let mut input = input.downcast::<Self>();
                     let label = input.get_prop::<TextAreaLabel>().clone();
