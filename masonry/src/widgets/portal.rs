@@ -151,6 +151,14 @@ pub(crate) fn compute_pan_range(mut viewport: Range<f64>, target: Range<f64>) ->
 }
 
 // --- MARK: METHODS
+fn scroll_progress(offset: f64, range: f64) -> f64 {
+    if range > 1e-12 {
+        (offset / range).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
 impl<W: Widget + ?Sized> Portal<W> {
     fn update_scrollbars_from_viewport(
         &mut self,
@@ -160,16 +168,8 @@ impl<W: Widget + ?Sized> Portal<W> {
     ) {
         let scroll_range = (content_size - portal_size).max(Size::ZERO);
 
-        let progress_x = if scroll_range.width > 1e-12 {
-            (self.viewport_pos.x / scroll_range.width).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let progress_y = if scroll_range.height > 1e-12 {
-            (self.viewport_pos.y / scroll_range.height).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let progress_x = scroll_progress(self.viewport_pos.x, scroll_range.width);
+        let progress_y = scroll_progress(self.viewport_pos.y, scroll_range.height);
 
         {
             let (scrollbar, mut scrollbar_ctx) = ctx.get_raw_mut(&mut self.scrollbar_horizontal);
@@ -772,7 +772,6 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         // TODO - document better
         // Recompute the portal offset for the new layout
         self.set_viewport_pos_raw(size, content_size, self.viewport_pos);
-        // TODO - recompute portal progress
 
         ctx.set_clip_path(size.to_rect());
 
@@ -783,17 +782,19 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         self.scrollbar_vertical_visible =
             !self.constrain_vertical && size.height < content_size.height;
 
+        {
+            let (scrollbar, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_horizontal);
+            scrollbar.portal_size = size.width;
+            scrollbar.content_size = content_size.width;
+            scrollbar.cursor_progress =
+                scroll_progress(self.viewport_pos.x, content_size.width - size.width);
+            sb_ctx.request_render();
+        }
         ctx.set_stashed(
             &mut self.scrollbar_horizontal,
             !self.scrollbar_horizontal_visible,
         );
         if self.scrollbar_horizontal_visible {
-            let (scrollbar, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_horizontal);
-            scrollbar.portal_size = size.width;
-            scrollbar.content_size = content_size.width;
-            sb_ctx.request_render();
-            drop(sb_ctx);
-
             let scrollbar_size = ctx.compute_size(
                 &mut self.scrollbar_horizontal,
                 SizeDef::fit(size),
@@ -806,17 +807,19 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
             );
         }
 
+        {
+            let (scrollbar, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_vertical);
+            scrollbar.portal_size = size.height;
+            scrollbar.content_size = content_size.height;
+            scrollbar.cursor_progress =
+                scroll_progress(self.viewport_pos.y, content_size.height - size.height);
+            sb_ctx.request_render();
+        }
         ctx.set_stashed(
             &mut self.scrollbar_vertical,
             !self.scrollbar_vertical_visible,
         );
         if self.scrollbar_vertical_visible {
-            let (scrollbar, mut sb_ctx) = ctx.get_raw_mut(&mut self.scrollbar_vertical);
-            scrollbar.portal_size = size.height;
-            scrollbar.content_size = content_size.height;
-            sb_ctx.request_render();
-            drop(sb_ctx);
-
             let scrollbar_size = ctx.compute_size(
                 &mut self.scrollbar_vertical,
                 SizeDef::fit(size),
