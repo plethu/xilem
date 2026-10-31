@@ -4,12 +4,13 @@
 use std::any::TypeId;
 
 use crate::core::{Property, UpdateCtx};
+use crate::layout::Length;
 use crate::peniko::color::{AlphaColor, Srgb};
 
 /// The color of a checkbox's "check" icon.
-#[expect(missing_docs, reason = "field names are self-descriptive")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CheckmarkColor {
+    /// Colour of the selected indicator.
     pub color: AlphaColor<Srgb>,
 }
 
@@ -23,10 +24,33 @@ impl Property for CheckmarkColor {
 }
 
 /// The width of the stroke which draws a checkbox's "check" icon.
-#[expect(missing_docs, reason = "field names are self-descriptive")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CheckmarkStrokeWidth {
+    /// Stroke width in logical pixels.
     pub width: f64,
+}
+
+/// Indicator geometry shared by checkbox and radio controls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CheckmarkSize {
+    /// Side length of the indicator in logical units.
+    pub side: Length,
+    /// Space between the indicator and its label in logical units.
+    pub gap: Length,
+}
+impl Property for CheckmarkSize {
+    fn static_default() -> &'static Self {
+        static DEFAULT: CheckmarkSize = CheckmarkSize {
+            side: crate::theme::BASIC_WIDGET_HEIGHT,
+            gap: crate::theme::WIDGET_CONTROL_COMPONENT_PADDING,
+        };
+        &DEFAULT
+    }
+}
+impl Default for CheckmarkSize {
+    fn default() -> Self {
+        *Self::static_default()
+    }
 }
 
 impl Property for CheckmarkStrokeWidth {
