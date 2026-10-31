@@ -1026,6 +1026,17 @@ impl MasonryState {
     pub fn handle_memory_warning(&mut self, _: &ActiveEventLoop) {}
 
     // --- MARK: SIGNALS
+    /// Deliver signals queued by direct [`RenderRoot`] mutations from an embedding host.
+    ///
+    /// Call after host-side focus or scrolling changes, before the event loop sleeps. This
+    /// uses the same platform, accessibility and exit handling as ordinary input dispatch.
+    pub fn flush_signals(&mut self, event_loop: &ActiveEventLoop, app_driver: &mut dyn AppDriver) {
+        self.handle_signals(event_loop, app_driver);
+        if self.exit {
+            event_loop.exit();
+        }
+    }
+
     fn handle_signals(&mut self, event_loop: &ActiveEventLoop, app_driver: &mut dyn AppDriver) {
         if self.is_suspended {
             tracing::warn!("Tried to handle a signal whilst suspended");
