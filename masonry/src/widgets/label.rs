@@ -3,7 +3,9 @@
 
 use std::any::TypeId;
 use std::mem::Discriminant;
+use std::num::NonZeroUsize;
 use std::ops::Range;
+mod clamp;
 mod ranged;
 
 use accesskit::{Node, Role};
@@ -54,6 +56,7 @@ pub struct Label {
     styles: StyleSet,
     ranged_styles: Vec<(Range<usize>, StyleProperty)>,
     text_alignment: TextAlign,
+    max_lines: Option<NonZeroUsize>,
 
     /// Whether to hint whilst drawing the text.
     ///
@@ -69,6 +72,7 @@ pub struct Label {
 struct TextLayout {
     /// Computed text layout.
     layout: Layout<BrushIndex>,
+    clamped: Option<clamp::Abbreviation>,
     /// Max advance value that was used when calculating this layout.
     max_advance: Option<f32>,
     /// Text alignment of this layout.
@@ -87,6 +91,7 @@ impl TextLayout {
     fn new(max_advance: Option<f32>, timestamp: u8) -> Self {
         Self {
             layout: Layout::new(),
+            clamped: None,
             max_advance,
             alignment: TextAlign::Start,
             alignment_width: -1., // Not aligned yet
@@ -118,6 +123,13 @@ impl TextLayout {
             self.alignment,
             TextAlignOptions::default(),
         );
+        if let Some(clamped) = &mut self.clamped {
+            clamped.layout.align(
+                Some(self.alignment_width),
+                self.alignment,
+                TextAlignOptions::default(),
+            );
+        }
     }
 
     /// Returns `true` if this layout would be the result for `max_advance`.
@@ -192,6 +204,7 @@ impl Label {
             styles,
             ranged_styles: Vec::new(),
             text_alignment: TextAlign::Start,
+            max_lines: None,
             hint: true,
             accessibility_hidden: false,
             accessibility: LayoutAccessibility::default(),
@@ -399,7 +412,11 @@ impl Label {
         // A suitable entry is one that was calculated with the same or larger constraint,
         // and resulted in a layout that still fits within this newly requested constraint.
         for (idx, layout) in self.layouts.iter_mut().enumerate() {
-            if layout.satisfies(max_advance) {
+            if if self.max_lines.is_some() {
+                layout.max_advance == max_advance
+            } else {
+                layout.satisfies(max_advance)
+            } {
                 layout.last_used = timestamp;
                 return idx;
             }
@@ -436,6 +453,23 @@ impl Label {
         builder.build_into(&mut layout.layout, &self.text);
 
         layout.layout.break_all_lines(max_advance);
+
+        if let Some(limit) = self.max_lines {
+            layout.clamped = clamp::Shaper {
+                text: &self.text,
+                styles: &self.styles,
+                ranged: &self.ranged_styles,
+                max_advance,
+                fonts: font_ctx,
+                layouts: layout_ctx,
+                #[cfg(feature = "testing")]
+                shapes: 0,
+            }
+            .abbreviate(&layout.layout, limit);
+            // Original line breaks cannot establish whether another width has the
+            // same abbreviated text. Clamped labels use exact-width cache entries.
+            return idx;
+        }
 
         // Check if the layout result matches an existing cache entry.
         // This happens when slightly increasing max_advance, as we can't then safely pre-identify
@@ -561,9 +595,9 @@ impl Widget for Label {
         let layout = &self.layouts[layout_idx];
 
         let length = if axis == inline {
-            layout.layout.width() // Inline length
+            layout.display().width() // Inline length
         } else {
-            layout.layout.height() // Block length
+            layout.display().height() // Block length
         };
 
         length.px()
@@ -590,10 +624,11 @@ impl Widget for Label {
 
         layout.align(self.text_alignment, inline_space);
 
-        let line_count = layout.layout.len();
+        let display = layout.display();
+        let line_count = display.len();
         if line_count > 0 {
-            let line_first = layout.layout.get(0).unwrap();
-            let line_last = layout.layout.get(line_count - 1).unwrap();
+            let line_first = display.get(0).unwrap();
+            let line_last = display.get(line_count - 1).unwrap();
             let first_baseline = line_first.metrics().baseline as f64;
             let last_baseline = line_last.metrics().baseline as f64;
             ctx.set_baselines(first_baseline, last_baseline);
@@ -601,7 +636,7 @@ impl Widget for Label {
             ctx.clear_baselines();
         }
 
-        if *line_break_mode == LineBreaking::Clip {
+        if *line_break_mode == LineBreaking::Clip || layout.clamped.is_some() {
             let border_box = size.to_rect() + ctx.border_box_insets();
             ctx.set_clip_path(border_box);
         } else {
@@ -623,7 +658,7 @@ impl Widget for Label {
         render_text(
             painter,
             Affine::IDENTITY,
-            &layout.layout,
+            layout.display(),
             &[text_color.color.into()],
             self.hint,
         );
@@ -672,7 +707,7 @@ impl Widget for Label {
     }
 
     fn get_debug_text(&self) -> Option<String> {
-        Some(self.text.to_string())
+        Some(self.displayed_text().to_owned())
     }
 }
 
