@@ -7,7 +7,7 @@ use std::mem::Discriminant;
 use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
-use crate::core::keyboard::{Key, KeyState, NamedKey};
+use crate::core::keyboard::{Key, KeyState, Modifiers, NamedKey};
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, BrushIndex, ChildrenIds, CursorIcon, EventCtx, Ime, LayoutCtx,
     MeasureCtx, PaintCtx, PointerButton, PointerButtonEvent, PointerEvent, PointerUpdate,
@@ -600,11 +600,12 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                 TextEvent::Keyboard(key)
                     if key.state == KeyState::Down && !self.editor.is_composing() =>
                 {
-                    let action_mod = if cfg!(target_os = "macos") {
-                        key.modifiers.meta()
-                    } else {
-                        key.modifiers.ctrl()
-                    };
+                    let action_mod = !key.modifiers.contains(Modifiers::ALT_GRAPH)
+                        && if cfg!(target_os = "macos") {
+                            key.modifiers.meta()
+                        } else {
+                            key.modifiers.ctrl()
+                        };
                     if let Key::Character(character) = &key.key {
                         let undo = action_mod && character.eq_ignore_ascii_case("z");
                         let redo = action_mod && character.eq_ignore_ascii_case("y");
@@ -642,12 +643,17 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                 }
                 let (shift, action_mod) = (
                     key_event.modifiers.shift(),
-                    if cfg!(target_os = "macos") {
-                        key_event.modifiers.meta()
-                    } else {
-                        key_event.modifiers.ctrl()
-                    },
+                    !key_event.modifiers.contains(Modifiers::ALT_GRAPH)
+                        && if cfg!(target_os = "macos") {
+                            key_event.modifiers.meta()
+                        } else {
+                            key_event.modifiers.ctrl()
+                        },
                 );
+                // Unhandled command chords must not fall through to literal text.
+                // Option text and explicit AltGraph remain text-producing input.
+                let inserts_text = key_event.modifiers.contains(Modifiers::ALT_GRAPH)
+                    || !(key_event.modifiers.ctrl() || key_event.modifiers.meta());
                 let (fctx, lctx) = ctx.text_contexts();
                 // Whether the text was changed.
                 let mut edited = false;
@@ -776,7 +782,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
 
                         edited = true;
                     }
-                    Key::Character(sp) if EDITABLE && sp.as_str() == " " => {
+                    Key::Character(sp) if EDITABLE && inserts_text && sp.as_str() == " " => {
                         self.editor
                             .driver(fctx, lctx)
                             .insert_or_replace_selection(" ");
@@ -809,7 +815,7 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
                     Key::Named(NamedKey::Escape) => {
                         ctx.submit_action::<Self::Action>(TextAction::Cancelled);
                     }
-                    Key::Character(text) if EDITABLE => {
+                    Key::Character(text) if EDITABLE && inserts_text => {
                         self.editor
                             .driver(fctx, lctx)
                             .insert_or_replace_selection(text);
