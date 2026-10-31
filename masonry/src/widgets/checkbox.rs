@@ -18,7 +18,7 @@ use crate::imaging::Painter;
 use crate::kurbo::{Axis, BezPath, Cap, Dashes, Join, Point, Size, Stroke};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
 use crate::properties::{
-    BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth, CornerRadius,
+    BorderColor, BorderWidth, CheckmarkColor, CheckmarkSize, CheckmarkStrokeWidth, CornerRadius,
 };
 use crate::theme;
 use crate::widgets::Label;
@@ -87,6 +87,7 @@ impl Checkbox {
 
 impl UsesProperty<CheckmarkStrokeWidth> for Checkbox {}
 impl UsesProperty<CheckmarkColor> for Checkbox {}
+impl UsesProperty<CheckmarkSize> for Checkbox {}
 
 /// The action type emitted by [`Checkbox`] when it is activated.
 ///
@@ -169,6 +170,9 @@ impl Widget for Checkbox {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
+        if CheckmarkSize::matches(property_type) {
+            ctx.request_layout();
+        }
         if BorderWidth::matches(property_type) {
             ctx.request_layout();
         }
@@ -184,13 +188,14 @@ impl Widget for Checkbox {
     fn measure(
         &mut self,
         ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
+        props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let check_side = theme::BASIC_WIDGET_HEIGHT;
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING;
+        let metrics = *props.get::<CheckmarkSize>(ctx.property_cache());
+        let check_side = metrics.side;
+        let check_padding = metrics.gap;
 
         let calc_other_length = |axis| match axis {
             Axis::Horizontal => check_side.saturating_add(check_padding),
@@ -221,9 +226,10 @@ impl Widget for Checkbox {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING.get();
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, props: &PropertiesRef<'_>, size: Size) {
+        let metrics = *props.get::<CheckmarkSize>(ctx.property_cache());
+        let check_side = metrics.side.get();
+        let check_padding = metrics.gap.get();
 
         let space = Size::new(
             (size.width - (check_side + check_padding)).max(0.),
@@ -285,7 +291,7 @@ impl Widget for Checkbox {
         props: &PropertiesRef<'_>,
         painter: &mut Painter<'_>,
     ) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
+        let check_side = props.get::<CheckmarkSize>(ctx.property_cache()).side.get();
         let check_size = Size::new(check_side, check_side);
 
         let cache = ctx.property_cache();
@@ -307,10 +313,11 @@ impl Widget for Checkbox {
             let checkmark_width = *props.get::<CheckmarkStrokeWidth>(cache);
             let brush = *props.get::<CheckmarkColor>(cache);
 
+            let scale = check_side / theme::BASIC_WIDGET_HEIGHT.get();
             let mut path = BezPath::new();
-            path.move_to((4.0, 9.0));
-            path.line_to((8.0, 13.0));
-            path.line_to((14.0, 5.0));
+            path.move_to((4.0 * scale, 9.0 * scale));
+            path.line_to((8.0 * scale, 13.0 * scale));
+            path.line_to((14.0 * scale, 5.0 * scale));
 
             let style = Stroke {
                 width: checkmark_width.width,

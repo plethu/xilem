@@ -10,15 +10,16 @@ use tracing::{Span, trace, trace_span};
 
 use crate::core::{
     AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, MeasureCtx, NewWidget,
-    PaintCtx, PointerEvent, PrePaintProps, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent,
-    Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod, keyboard::Key,
-    paint_background, paint_box_shadow,
+    PaintCtx, PointerEvent, PrePaintProps, PropertiesMut, PropertiesRef, Property, RegisterCtx,
+    TextEvent, Update, UpdateCtx, UsesProperty, Widget, WidgetId, WidgetMut, WidgetPod,
+    keyboard::Key, paint_background, paint_box_shadow,
 };
 use crate::imaging::Painter;
 use crate::kurbo::{Axis, Cap, Circle, Dashes, Join, Point, Size, Stroke};
 use crate::layout::{LayoutSize, LenReq, Length, SizeDef};
-use crate::properties::{BorderColor, BorderWidth, CheckmarkColor, CheckmarkStrokeWidth};
-use crate::theme;
+use crate::properties::{
+    BorderColor, BorderWidth, CheckmarkColor, CheckmarkSize, CheckmarkStrokeWidth,
+};
 use crate::widgets::{Label, RadioGroup};
 
 /// A radio button that can be toggled.
@@ -89,6 +90,7 @@ impl RadioButton {
 }
 
 impl UsesProperty<CheckmarkColor> for RadioButton {}
+impl UsesProperty<CheckmarkSize> for RadioButton {}
 
 /// The action type emitted by [`RadioButton`] when it is selected.
 ///
@@ -226,6 +228,9 @@ impl Widget for RadioButton {
     }
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
+        if CheckmarkSize::matches(property_type) {
+            ctx.request_layout();
+        }
         CheckmarkStrokeWidth::prop_changed(ctx, property_type);
         CheckmarkColor::prop_changed(ctx, property_type);
     }
@@ -233,13 +238,14 @@ impl Widget for RadioButton {
     fn measure(
         &mut self,
         ctx: &mut MeasureCtx<'_>,
-        _props: &PropertiesRef<'_>,
+        props: &PropertiesRef<'_>,
         axis: Axis,
         len_req: LenReq,
         cross_length: Option<Length>,
     ) -> Length {
-        let check_side = theme::BASIC_WIDGET_HEIGHT;
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING;
+        let metrics = *props.get::<CheckmarkSize>(ctx.property_cache());
+        let check_side = metrics.side;
+        let check_padding = metrics.gap;
 
         let calc_other_length = |axis| match axis {
             Axis::Horizontal => check_side.saturating_add(check_padding),
@@ -270,9 +276,10 @@ impl Widget for RadioButton {
         }
     }
 
-    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, _props: &PropertiesRef<'_>, size: Size) {
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
-        let check_padding = theme::WIDGET_CONTROL_COMPONENT_PADDING.get();
+    fn layout(&mut self, ctx: &mut LayoutCtx<'_>, props: &PropertiesRef<'_>, size: Size) {
+        let metrics = *props.get::<CheckmarkSize>(ctx.property_cache());
+        let check_side = metrics.side.get();
+        let check_padding = metrics.gap.get();
 
         let space = Size::new(
             (size.width - (check_side + check_padding)).max(0.),
@@ -339,7 +346,7 @@ impl Widget for RadioButton {
         let border_width = *props.get::<BorderWidth>(cache);
         let brush = *props.get::<CheckmarkColor>(cache);
 
-        let check_side = theme::BASIC_WIDGET_HEIGHT.get();
+        let check_side = props.get::<CheckmarkSize>(ctx.property_cache()).side.get();
         let check_size = Size::new(check_side, check_side);
 
         let border_circle = Circle::new(
