@@ -86,6 +86,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod app_driver;
+#[cfg(target_os = "linux")]
+mod clipboard;
 mod convert_winit_event;
 mod event_loop_runner;
 mod vello_util;
