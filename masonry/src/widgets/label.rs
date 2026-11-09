@@ -3,8 +3,6 @@
 
 use std::any::TypeId;
 use std::mem::Discriminant;
-use std::ops::Range;
-mod ranged;
 
 use accesskit::{Node, Role};
 use include_doc_path::include_doc_path;
@@ -52,7 +50,6 @@ pub struct Label {
 
     text: ArcStr,
     styles: StyleSet,
-    ranged_styles: Vec<(Range<usize>, StyleProperty)>,
     text_alignment: TextAlign,
 
     /// Whether to hint whilst drawing the text.
@@ -190,7 +187,6 @@ impl Label {
             active_layout: usize::MAX,
             text: text.into(),
             styles,
-            ranged_styles: Vec::new(),
             text_alignment: TextAlign::Start,
             hint: true,
             accessibility_hidden: false,
@@ -330,10 +326,9 @@ impl Label {
         old
     }
 
-    /// Replaces the text of this widget and clears its ranged styles.
+    /// Replaces the text of this widget.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: impl Into<ArcStr>) {
         this.widget.text = new_text.into();
-        this.widget.ranged_styles.clear();
 
         this.widget.clear_cache();
         this.ctx.request_layout();
@@ -429,9 +424,6 @@ impl Label {
         let mut builder = layout_ctx.ranged_builder(font_ctx, &self.text, 1.0, true);
         for prop in self.styles.inner().values() {
             builder.push_default(prop.to_owned());
-        }
-        for (range, property) in &self.ranged_styles {
-            builder.push(property.clone(), range.clone());
         }
         builder.build_into(&mut layout.layout, &self.text);
 
