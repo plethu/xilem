@@ -16,24 +16,9 @@ Option text remain supported by the text-input guard. These are
 local corrections, not verified upstream backports. No unsafe-code lint exception is added to Masonry.
 Remove these overrides when equivalent upstream behavior is verified.
 
-Comparison text additionally uses a small ranged-style extension to the existing Masonry Label.
-It applies Parley's byte-range styles through the Label's existing layout cache and native text
-accessibility path. UTF-8 and brush boundaries are checked; replacing text clears old ranges.
-Recite uses bold and underline to show changed words without a colour dependency. This is confined
-to read-only comparisons; it does not add rich editing or pointer selection to Label. Consumer tests
-cover complete ordered text, wrapping, style replacement and native emphasis metadata. The fix is
-the `label-ranged-styles` commit.
-
-Map excerpts additionally use the Label's optional positive line cap. Overflow uses an actual
-Parley-shaped ellipsis at a logical cluster boundary; short text keeps its natural height. The
-complete original layout remains authoritative for accessible text and text ranges. Exact-width
-abbreviation caching leaves ordinary Label caching unchanged, and camera-only transforms do not
-reshape text. The bounded search retains only a verified fitting candidate and may conservatively
-omit more text with complex shaping. An empty visual result is permitted when even the ellipsis
-cannot fit. Apply the `label-line-clamp` commit after the ranged-style
-commit. Writer excerpt tests cover reflow, cache invalidation, Unicode text retention and unchanged
-transform cost; native checks must additionally verify complete AT-SPI `GetText` on a visibly
-abbreviated excerpt. These Labels do not add pointer selection to the actionable Map cards.
+Recite previously carried byte-range `Label` styles and a `Label` line cap here. Recite's own
+`ShapedText` widget now provides both (plethu/recite#288), so those commits are reverted on this
+branch.
 
 Masonry's compose pass additionally rebuilds an accessibility node only when that widget's own
 transform changes. Upstream marked every descendant of a moved widget, although AccessKit nodes
