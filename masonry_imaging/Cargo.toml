@@ -21,11 +21,14 @@ default = ["imaging_vello"]
 imaging_vello = ["dep:imaging_vello"]
 imaging_vello_hybrid = ["dep:imaging_vello_hybrid"]
 imaging_vello_cpu = ["dep:imaging_vello_cpu"]
+# Rasterise Vello CPU frames on one worker per available core.
+vello_cpu_multithreading = ["imaging_vello_cpu", "dep:vello_cpu", "vello_cpu/multithreading"]
 imaging_skia = ["dep:imaging_skia"]
 
 [dependencies]
 imaging.workspace = true
 imaging_vello_cpu = { workspace = true, optional = true }
+vello_cpu = { version = "0.0.7", default-features = false, optional = true }
 kurbo.workspace = true
 peniko.workspace = true
 

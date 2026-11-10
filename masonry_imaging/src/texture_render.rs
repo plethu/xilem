@@ -135,6 +135,7 @@ mod shared_texture_renderer {
 #[cfg(not(any(
     feature = "imaging_vello",
     feature = "imaging_vello_hybrid",
+    feature = "imaging_vello_cpu",
     all(feature = "imaging_skia", not(target_arch = "wasm32"))
 )))]
 mod imp {
@@ -245,6 +246,99 @@ mod imp {
 
             render_window_source_to_texture(renderer, frame, target.texture.clone())
                 .map_err(Error::Render)
+        }
+    }
+}
+
+/// Vello CPU rasterises on the host and uploads the frame into the target texture, so the GPU
+/// (or a software Vulkan implementation) only copies and presents it.
+#[cfg(all(
+    feature = "imaging_vello_cpu",
+    not(feature = "imaging_vello"),
+    not(feature = "imaging_vello_hybrid"),
+    not(all(feature = "imaging_skia", not(target_arch = "wasm32")))
+))]
+mod imp {
+    use imaging::render::{ImageBufferFormat, ImageBufferTarget, ImageRenderer, ImageRendererError};
+
+    use super::RenderTarget;
+    use crate::PreparedFrame;
+
+    /// Errors that can occur while rendering Masonry content with Vello CPU.
+    #[derive(Debug)]
+    pub(super) enum Error {
+        /// Rasterising the Masonry source failed.
+        Render(ImageRendererError),
+    }
+
+    impl core::fmt::Display for Error {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::Render(err) => write!(f, "rendering with Vello CPU failed: {err:?}"),
+            }
+        }
+    }
+
+    impl std::error::Error for Error {}
+
+    /// Runtime renderer state for the Vello CPU backend.
+    #[derive(Debug)]
+    pub(super) struct Renderer {
+        inner: imaging_vello_cpu::VelloCpuRenderer,
+        /// Reused frame pixels, tightly packed RGBA8.
+        pixels: Vec<u8>,
+    }
+
+    impl Renderer {
+        /// Stable backend name for diagnostics.
+        pub(super) const BACKEND_NAME: &str = crate::vello_cpu::BACKEND_NAME;
+
+        /// Create an empty renderer state.
+        pub(super) fn new() -> Self {
+            Self {
+                inner: imaging_vello_cpu::VelloCpuRenderer::new(1, 1),
+                pixels: Vec::new(),
+            }
+        }
+
+        /// Render the given Masonry paint output into the provided target texture.
+        pub(super) fn render_to_texture(
+            &mut self,
+            target: RenderTarget<'_>,
+            frame: PreparedFrame<'_>,
+        ) -> Result<(), Error> {
+            let size = target.texture.size();
+            let bytes_per_row = size.width as usize * 4;
+            self.pixels.resize(bytes_per_row * size.height as usize, 0);
+            let mut frame = frame;
+            self.inner
+                .render_source_into(
+                    &mut frame,
+                    ImageBufferTarget {
+                        data: &mut self.pixels,
+                        width: size.width,
+                        height: size.height,
+                        bytes_per_row,
+                        format: ImageBufferFormat::Rgba8Unorm,
+                    },
+                )
+                .map_err(Error::Render)?;
+            target.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: target.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(size.width * 4),
+                    rows_per_image: Some(size.height),
+                },
+                size,
+            );
+            Ok(())
         }
     }
 }
