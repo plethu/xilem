@@ -31,3 +31,13 @@ geometry from ancestor transforms, as the AT-SPI exposure regressions check.
 
 Recite also carried a commit that formatted the parent widget name only when a child lookup
 panics. Upstream made the same change (linebender/xilem#1858), so the rebase dropped it.
+
+Windows can also render with Vello CPU. `imaging_vello_cpu` rasterises each frame on the host and
+uploads it into the target texture, so presentation only copies pixels. `vello_cpu_fallback`
+builds both backends and picks one per adapter: Vello CPU when wgpu reports a CPU adapter such as
+llvmpipe or WARP, GPU Vello otherwise. `MASONRY_IMAGING_BACKEND=vello|vello_cpu` overrides the
+choice, and the selection is logged once at `info`. `vello_cpu_multithreading` enables Vello CPU's
+worker pool. On a 4-core host without a GPU, Recite Writer's edit-to-paint p50 fell from 26 ms
+(GPU Vello on llvmpipe) to 13 ms and frame pacing from about 35 to 60 fps (plethu/recite#283).
+Remove this when Masonry selects a CPU renderer for software adapters itself.
+
