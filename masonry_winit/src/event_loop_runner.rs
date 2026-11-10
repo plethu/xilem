@@ -7,10 +7,10 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, mpsc};
 
 use accesskit_winit::Adapter;
-use copypasta::nop_clipboard::NopClipboardContext;
 #[cfg(not(target_os = "linux"))]
 use copypasta::ClipboardContext;
 use copypasta::ClipboardProvider;
+use copypasta::nop_clipboard::NopClipboardContext;
 use masonry_core::app::{
     RenderRoot, RenderRootOptions, RenderRootSignal, VisualLayerKind, WindowSizePolicy,
 };
@@ -725,7 +725,7 @@ impl MasonryState {
 
         let _render_span = tracing::info_span!(
             "Rendering Masonry window",
-            backend = ImagingRenderer::BACKEND_NAME
+            backend = renderer.backend_name()
         )
         .entered();
         if let Err(err) = renderer.render_to_texture(
@@ -739,7 +739,7 @@ impl MasonryState {
             frame,
         ) {
             tracing::error!(
-                backend = ImagingRenderer::BACKEND_NAME,
+                backend = renderer.backend_name(),
                 "Couldn't render Masonry content into target texture: {err}"
             );
             return;

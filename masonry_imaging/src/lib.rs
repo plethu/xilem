@@ -61,6 +61,10 @@ pub mod vello_cpu;
 #[cfg(all(not(target_arch = "wasm32"), feature = "imaging_vello_hybrid"))]
 pub mod vello_hybrid;
 
+// The dependency only enables Vello CPU's worker pool for `imaging_vello_cpu`.
+#[cfg(feature = "vello_cpu_multithreading")]
+const _: Option<::vello_cpu::RenderSettings> = None;
+
 pub use imaging::render::ImageRenderer;
 #[cfg(not(target_arch = "wasm32"))]
 pub use imaging_wgpu::TextureRenderer;

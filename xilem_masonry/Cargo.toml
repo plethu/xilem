@@ -19,6 +19,7 @@ targets = []
 default = ["masonry/default", "imaging_vello"]
 imaging_vello = ["masonry/imaging_vello"]
 imaging_vello_hybrid = ["masonry/imaging_vello_hybrid"]
+imaging_vello_cpu = ["masonry/imaging_vello_cpu"]
 imaging_skia = ["masonry/imaging_skia"]
 
 [dependencies]
