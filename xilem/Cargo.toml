@@ -51,6 +51,7 @@ imaging_vello_cpu = [
 ]
 vello_cpu_multithreading = ["imaging_vello_cpu", "masonry_winit/vello_cpu_multithreading"]
 vello_cpu_fallback = ["imaging_vello", "imaging_vello_cpu", "masonry_winit/vello_cpu_fallback"]
+softbuffer_fallback = ["imaging_vello_cpu", "masonry_winit/softbuffer_fallback"]
 
 [dependencies]
 xilem_core.workspace = true

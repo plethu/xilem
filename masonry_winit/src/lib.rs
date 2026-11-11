@@ -90,6 +90,8 @@ mod app_driver;
 mod clipboard;
 mod convert_winit_event;
 mod event_loop_runner;
+#[cfg(feature = "softbuffer_fallback")]
+mod soft_surface;
 mod vello_util;
 
 pub use winit;
