@@ -41,3 +41,9 @@ worker pool. On a 4-core host without a GPU, Recite Writer's edit-to-paint p50 f
 (GPU Vello on llvmpipe) to 13 ms and frame pacing from about 35 to 60 fps (plethu/recite#283).
 Remove this when Masonry selects a CPU renderer for software adapters itself.
 
+`softbuffer_fallback` keeps a window rendering when wgpu cannot create a surface at all, for
+example on a host with no Vulkan, Metal, D3D or GL driver. Masonry then rasterises with Vello CPU
+and presents through `softbuffer` instead of panicking, and logs the choice with
+`presenter="softbuffer"`. Hosts with a software adapter such as llvmpipe still use the wgpu path
+above. Remove this when Masonry presents CPU frames without wgpu itself.
+
