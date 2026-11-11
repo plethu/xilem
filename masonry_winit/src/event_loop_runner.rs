@@ -224,9 +224,12 @@ pub struct MasonryState {
     /// Windows presented without wgpu once it could not create a surface.
     #[cfg(feature = "softbuffer_fallback")]
     soft_surfaces: HashMap<HandleId, crate::soft_surface::SoftSurface>,
-    /// Set after wgpu fails to create a window surface; later windows go straight to softbuffer.
+    /// Whether the presenter has been chosen; it is decided once, before the first surface.
     #[cfg(feature = "softbuffer_fallback")]
-    wgpu_unavailable: bool,
+    presenter_chosen: bool,
+    /// Windows present through softbuffer: the adapters are CPU-only or wgpu has no surface.
+    #[cfg(feature = "softbuffer_fallback")]
+    use_softbuffer: bool,
     windows: HashMap<HandleId, Window>,
     /// On Metal, we need to track the state of resize requests to avoid jitter.
     #[cfg(target_os = "macos")]
@@ -431,7 +434,9 @@ impl MasonryState {
             #[cfg(feature = "softbuffer_fallback")]
             soft_surfaces: HashMap::new(),
             #[cfg(feature = "softbuffer_fallback")]
-            wgpu_unavailable: false,
+            presenter_chosen: false,
+            #[cfg(feature = "softbuffer_fallback")]
+            use_softbuffer: false,
             #[cfg(target_os = "macos")]
             resized_window: None,
 
@@ -718,8 +723,15 @@ impl MasonryState {
         app_driver: &mut dyn AppDriver,
     ) -> bool {
         #[cfg(feature = "softbuffer_fallback")]
-        if self.wgpu_unavailable {
-            return false;
+        {
+            if !self.presenter_chosen {
+                self.presenter_chosen = true;
+                self.use_softbuffer =
+                    crate::soft_surface::prefer_softbuffer(&self.render_cx.instance);
+            }
+            if self.use_softbuffer {
+                return false;
+            }
         }
         if let Some(surface) = self.surfaces.get_mut(&handle_id) {
             #[cfg(target_os = "macos")]
@@ -749,7 +761,7 @@ impl MasonryState {
                     error = %err,
                     "Selected Masonry imaging backend"
                 );
-                self.wgpu_unavailable = true;
+                self.use_softbuffer = true;
                 return false;
             }
             #[cfg(not(feature = "softbuffer_fallback"))]

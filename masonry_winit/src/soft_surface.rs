@@ -1,10 +1,11 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! CPU presentation for windows when wgpu cannot create a surface.
+//! CPU presentation for windows on hosts without a hardware GPU.
 //!
-//! Frames are rasterised with Vello CPU and copied into a `softbuffer` surface, so a window still
-//! renders on hosts without a usable Vulkan, Metal, D3D or GL driver.
+//! Frames are rasterised with Vello CPU and copied into a `softbuffer` surface. This is used when
+//! every wgpu adapter is a CPU implementation such as llvmpipe or WARP, where presenting through
+//! wgpu only adds an emulated GPU copy, and when wgpu cannot create a surface at all.
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
@@ -69,4 +70,50 @@ impl SoftSurface {
             tracing::error!("Couldn't present the softbuffer frame: {err}");
         }
     }
+}
+
+/// Environment variable that forces a backend; `softbuffer` selects this presenter.
+const OVERRIDE: &str = "MASONRY_IMAGING_BACKEND";
+
+/// Whether windows should present through `softbuffer` rather than wgpu.
+///
+/// True when `MASONRY_IMAGING_BACKEND=softbuffer`, or when wgpu finds adapters and all of them are
+/// CPU implementations. Without adapters this returns false, so surface creation fails and falls
+/// back with its own reason. The choice is logged once.
+pub(crate) fn prefer_softbuffer(instance: &wgpu::Instance) -> bool {
+    match std::env::var(OVERRIDE).ok().as_deref() {
+        Some("softbuffer") => {
+            tracing::info!(
+                target: "masonry_imaging::selection",
+                backend = "imaging_vello_cpu",
+                reason = "override",
+                presenter = "softbuffer",
+                "Selected Masonry imaging backend"
+            );
+            return true;
+        }
+        Some("vello" | "vello_cpu") => return false,
+        _ => {}
+    }
+    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let Some(first) = adapters.first() else {
+        return false;
+    };
+    if adapters
+        .iter()
+        .any(|adapter| adapter.get_info().device_type != wgpu::DeviceType::Cpu)
+    {
+        return false;
+    }
+    let info = first.get_info();
+    tracing::info!(
+        target: "masonry_imaging::selection",
+        backend = "imaging_vello_cpu",
+        reason = "software adapter",
+        presenter = "softbuffer",
+        adapter = %info.name,
+        device_type = ?info.device_type,
+        "Selected Masonry imaging backend"
+    );
+    true
 }
