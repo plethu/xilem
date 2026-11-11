@@ -41,3 +41,12 @@ worker pool. On a 4-core host without a GPU, Recite Writer's edit-to-paint p50 f
 (GPU Vello on llvmpipe) to 13 ms and frame pacing from about 35 to 60 fps (plethu/recite#283).
 Remove this when Masonry selects a CPU renderer for software adapters itself.
 
+`softbuffer_fallback` presents Vello CPU frames through `softbuffer` instead of wgpu when every
+wgpu adapter is a CPU implementation such as llvmpipe or WARP, and when wgpu cannot create a surface
+at all, for example on a host with no Vulkan, Metal, D3D or GL driver, where Masonry previously
+panicked. On a CPU-only adapter the wgpu path only adds an emulated GPU copy: on the same 4-core
+host, Writer typed with 0.66 cores of CPU through `softbuffer` against 1.1-1.2 through llvmpipe, at
+the same 60 fps and edit-to-paint (plethu/recite#283). The choice is logged with
+`presenter="softbuffer"`, and `MASONRY_IMAGING_BACKEND=softbuffer|vello_cpu|vello` overrides it.
+Remove this when Masonry presents CPU frames without wgpu itself.
+
