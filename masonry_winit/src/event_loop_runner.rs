@@ -221,6 +221,15 @@ pub struct MasonryState {
     window_id_to_handle_id: HashMap<WindowId, HandleId>,
 
     surfaces: HashMap<HandleId, RenderSurface<'static>>,
+    /// Windows presented without wgpu once it could not create a surface.
+    #[cfg(feature = "softbuffer_fallback")]
+    soft_surfaces: HashMap<HandleId, crate::soft_surface::SoftSurface>,
+    /// Whether the presenter has been chosen; it is decided once, before the first surface.
+    #[cfg(feature = "softbuffer_fallback")]
+    presenter_chosen: bool,
+    /// Windows present through softbuffer: the adapters are CPU-only or wgpu has no surface.
+    #[cfg(feature = "softbuffer_fallback")]
+    use_softbuffer: bool,
     windows: HashMap<HandleId, Window>,
     /// On Metal, we need to track the state of resize requests to avoid jitter.
     #[cfg(target_os = "macos")]
@@ -422,6 +431,12 @@ impl MasonryState {
             window_id_to_handle_id: HashMap::new(),
             windows: HashMap::new(),
             surfaces: HashMap::new(),
+            #[cfg(feature = "softbuffer_fallback")]
+            soft_surfaces: HashMap::new(),
+            #[cfg(feature = "softbuffer_fallback")]
+            presenter_chosen: false,
+            #[cfg(feature = "softbuffer_fallback")]
+            use_softbuffer: false,
             #[cfg(target_os = "macos")]
             resized_window: None,
 
@@ -520,6 +535,8 @@ impl MasonryState {
         // All surfaces needs to be cleared when suspended.
         // They will be recreated when resumed.
         self.surfaces.clear();
+        #[cfg(feature = "softbuffer_fallback")]
+        self.soft_surfaces.clear();
     }
 
     pub(crate) fn create_window(&mut self, event_loop: &ActiveEventLoop, new_window: NewWindow) {
@@ -595,6 +612,8 @@ impl MasonryState {
             .remove(&window_id)
             .unwrap_or_else(|| panic!("could not find window for id {window_id:?}"));
         self.surfaces.remove(&window_id);
+        #[cfg(feature = "softbuffer_fallback")]
+        self.soft_surfaces.remove(&window_id);
         let window = self.windows.remove(&window_id).unwrap();
 
         // HACK: When we exit, on some systems (known to happen with Wayland on KDE),
@@ -612,42 +631,19 @@ impl MasonryState {
         if size.width == 0 || size.height == 0 {
             // Surface can't have a dimension of zero, remove the stale surface to save memory.
             self.surfaces.remove(&handle_id);
+            #[cfg(feature = "softbuffer_fallback")]
+            self.soft_surfaces.remove(&handle_id);
             return;
         }
 
-        // Get the existing surface or create a new one
-        let surface = if let Some(surface) = self.surfaces.get_mut(&handle_id) {
-            #[cfg(target_os = "macos")]
-            if self.resized_window == Some(handle_id) {
-                self.render_cx.on_window_resize_state_change(surface, true);
-            }
-
-            // The window might have been resized, make sure the surface dimensions match.
-            if surface.config.width != size.width || surface.config.height != size.height {
-                self.render_cx
-                    .resize_surface(surface, size.width, size.height);
-            }
-            surface
-        } else {
-            let devices_before = self.render_cx.devices.len();
-            let surface = create_surface(&mut self.render_cx, window.handle.clone(), size);
-            let dev_id = surface.dev_id;
-            self.surfaces.insert(handle_id, surface);
-            let surface = self.surfaces.get_mut(&handle_id).unwrap();
-
-            if self.render_cx.devices.len() != devices_before {
-                let device_handle = &self.render_cx.devices[dev_id];
-                let wgpu = WgpuContext {
-                    instance: &self.render_cx.instance,
-                    adapter: &device_handle.adapter,
-                    device: &device_handle.device,
-                    queue: &device_handle.queue,
-                };
-                app_driver.on_wgpu_ready(&wgpu);
-            }
-
-            surface
-        };
+        #[cfg(feature = "softbuffer_fallback")]
+        let handle = window.handle.clone();
+        let gpu = self.prepare_surface(handle_id, size, app_driver);
+        #[cfg(feature = "softbuffer_fallback")]
+        if !gpu {
+            self.prepare_soft_surface(handle_id, handle);
+        }
+        let window = self.windows.get_mut(&handle_id).unwrap();
 
         let now = Instant::now();
         // TODO: this calculation uses wall-clock time of the paint call, which
@@ -667,7 +663,9 @@ impl MasonryState {
         self.last_anim = animation_continues.then_some(now);
 
         #[cfg(target_os = "macos")]
-        if self.resized_window == Some(handle_id) {
+        if self.resized_window == Some(handle_id)
+            && let Some(surface) = self.surfaces.get_mut(&handle_id)
+        {
             self.render_cx.on_window_resize_state_change(surface, true);
         }
 
@@ -699,12 +697,99 @@ impl MasonryState {
             root_scene,
             &overlays,
         );
-        Self::render(surface, window, frame, &self.render_cx, &mut self.renderer);
+        if gpu {
+            let surface = self.surfaces.get_mut(&handle_id).unwrap();
+            Self::render(surface, window, frame, &self.render_cx, &mut self.renderer);
+        } else {
+            #[cfg(feature = "softbuffer_fallback")]
+            self.soft_surfaces
+                .get_mut(&handle_id)
+                .unwrap()
+                .present(&window.handle, frame);
+        }
         #[cfg(feature = "tracy")]
         drop(self.frame.take());
         if let Some(tree_update) = tree_update {
             window.accesskit_adapter.update_if_active(|| tree_update);
         }
+    }
+
+    /// Make sure the window has a current wgpu surface, returning `false` when it must be
+    /// presented without wgpu.
+    fn prepare_surface(
+        &mut self,
+        handle_id: HandleId,
+        size: PhysicalSize<u32>,
+        app_driver: &mut dyn AppDriver,
+    ) -> bool {
+        #[cfg(feature = "softbuffer_fallback")]
+        {
+            if !self.presenter_chosen {
+                self.presenter_chosen = true;
+                self.use_softbuffer =
+                    crate::soft_surface::prefer_softbuffer(&self.render_cx.instance);
+            }
+            if self.use_softbuffer {
+                return false;
+            }
+        }
+        if let Some(surface) = self.surfaces.get_mut(&handle_id) {
+            #[cfg(target_os = "macos")]
+            if self.resized_window == Some(handle_id) {
+                self.render_cx.on_window_resize_state_change(surface, true);
+            }
+
+            // The window might have been resized, make sure the surface dimensions match.
+            if surface.config.width != size.width || surface.config.height != size.height {
+                self.render_cx
+                    .resize_surface(surface, size.width, size.height);
+            }
+            return true;
+        }
+
+        let handle = self.windows[&handle_id].handle.clone();
+        let devices_before = self.render_cx.devices.len();
+        let surface = match create_surface(&mut self.render_cx, handle, size) {
+            Ok(surface) => surface,
+            #[cfg(feature = "softbuffer_fallback")]
+            Err(err) => {
+                tracing::info!(
+                    target: "masonry_imaging::selection",
+                    backend = "imaging_vello_cpu",
+                    reason = "no wgpu surface",
+                    presenter = "softbuffer",
+                    error = %err,
+                    "Selected Masonry imaging backend"
+                );
+                self.use_softbuffer = true;
+                return false;
+            }
+            #[cfg(not(feature = "softbuffer_fallback"))]
+            Err(err) => panic!("Couldn't create a wgpu surface for the window: {err}"),
+        };
+        let dev_id = surface.dev_id;
+        self.surfaces.insert(handle_id, surface);
+
+        if self.render_cx.devices.len() != devices_before {
+            let device_handle = &self.render_cx.devices[dev_id];
+            let wgpu = WgpuContext {
+                instance: &self.render_cx.instance,
+                adapter: &device_handle.adapter,
+                device: &device_handle.device,
+                queue: &device_handle.queue,
+            };
+            app_driver.on_wgpu_ready(&wgpu);
+        }
+        true
+    }
+
+    /// Make sure the window has a softbuffer surface.
+    #[cfg(feature = "softbuffer_fallback")]
+    fn prepare_soft_surface(&mut self, handle_id: HandleId, handle: Arc<WindowHandle>) {
+        self.soft_surfaces.entry(handle_id).or_insert_with(|| {
+            crate::soft_surface::SoftSurface::new(handle)
+                .unwrap_or_else(|err| panic!("Couldn't create a softbuffer surface: {err}"))
+        });
     }
 
     // --- MARK: RENDER
@@ -1206,8 +1291,10 @@ impl MasonryState {
     /// This affects what users commonly know as "VSync".
     pub fn set_present_mode(&mut self, window_id: WindowId, present_mode: wgpu::PresentMode) {
         let handle_id = self.handle_id(window_id);
-        let surface = self.surfaces.get_mut(&handle_id).unwrap();
-        self.render_cx.set_present_mode(surface, present_mode);
+        // Windows presented through softbuffer have no wgpu present mode.
+        if let Some(surface) = self.surfaces.get_mut(&handle_id) {
+            self.render_cx.set_present_mode(surface, present_mode);
+        }
     }
 }
 
@@ -1215,7 +1302,7 @@ fn create_surface(
     render_cx: &mut RenderContext,
     handle: Arc<WindowHandle>,
     size: PhysicalSize<u32>,
-) -> RenderSurface<'static> {
+) -> Result<RenderSurface<'static>, crate::vello_util::RenderSurfaceError> {
     assert!(
         size.width != 0 && size.height != 0,
         "cannot create a surface with a width or height of zero"
@@ -1226,5 +1313,4 @@ fn create_surface(
         size.height,
         wgpu::PresentMode::AutoVsync,
     ))
-    .unwrap()
 }

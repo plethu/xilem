@@ -615,15 +615,18 @@ mod imp {
         let forced = std::env::var(OVERRIDE).ok();
         let (backend, reason) = match forced.as_deref() {
             Some("vello") => (Backend::Gpu, "override"),
-            Some("vello_cpu") => (Backend::Cpu, "override"),
+            // `softbuffer` presentation also rasterises with Vello CPU.
+            Some("vello_cpu" | "softbuffer") => (Backend::Cpu, "override"),
             _ if info.device_type == wgpu::DeviceType::Cpu => (Backend::Cpu, "software adapter"),
             _ => (Backend::Gpu, "hardware adapter"),
         };
         if let Some(value) = forced
             .as_deref()
-            .filter(|value| !matches!(*value, "vello" | "vello_cpu"))
+            .filter(|value| !matches!(*value, "vello" | "vello_cpu" | "softbuffer"))
         {
-            tracing::warn!("Ignoring {OVERRIDE}={value}; expected `vello` or `vello_cpu`");
+            tracing::warn!(
+                "Ignoring {OVERRIDE}={value}; expected `vello`, `vello_cpu` or `softbuffer`"
+            );
         }
         tracing::info!(
             backend = match backend {
