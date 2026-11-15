@@ -4,7 +4,7 @@
 use std::any::type_name;
 use std::marker::PhantomData;
 
-use masonry::accesskit::Toggled;
+use masonry::accesskit::{Role, Toggled};
 use masonry::core::ArcStr;
 pub use masonry::core::PointerButton;
 use masonry::widgets::{self, ButtonAccessState, ButtonPress};
@@ -91,6 +91,9 @@ pub fn button<
         },
         disabled: false,
         access_state: ButtonAccessState::default(),
+        role: Role::Button,
+        accessible_label: None,
+        focusable: true,
         phantom: PhantomData,
     }
 }
@@ -136,6 +139,9 @@ pub fn button_any_pointer<State: 'static, Action, V: WidgetView<State, Action>>(
         callback: move |state: &mut State, button| MessageResult::Action(callback(state, button)),
         disabled: false,
         access_state: ButtonAccessState::default(),
+        role: Role::Button,
+        accessible_label: None,
+        focusable: true,
         phantom: PhantomData,
     }
 }
@@ -149,6 +155,9 @@ pub struct Button<State, Action, F, V> {
     callback: F,
     disabled: bool,
     access_state: ButtonAccessState,
+    role: Role,
+    accessible_label: Option<ArcStr>,
+    focusable: bool,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -184,6 +193,31 @@ impl<State, Action, F, V> Button<State, Action, F, V> {
         self.access_state.toggled = Some(toggled.into());
         self
     }
+
+    /// Sets the accessibility role the button reports, [`Role::Button`] by default.
+    ///
+    /// Use [`Role::Tab`] with [`selected`](Self::selected) for a tab in a [`Role::TabList`].
+    /// AccessKit doesn't name tabs from their contents, so also set an
+    /// [`accessible_label`](Self::accessible_label).
+    pub fn role(mut self, role: Role) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// Sets the name assistive technology announces, replacing the name taken from the contents.
+    pub fn accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Sets whether Tab and Shift+Tab can focus the button. The default is `true`.
+    ///
+    /// A button that isn't focusable can still be focused by pointer presses, by code and by
+    /// assistive technology, and still activates, like an HTML `tabindex="-1"` element.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
 }
 
 /// Use a distinctive number here, to be able to catch bugs.
@@ -208,9 +242,14 @@ where
         });
         (
             ctx.with_action_widget(|ctx| {
-                let mut pod = ctx.create_pod(
-                    widgets::Button::new(child.new_widget).with_access_state(self.access_state),
-                );
+                let mut button = widgets::Button::new(child.new_widget)
+                    .with_access_state(self.access_state)
+                    .with_role(self.role)
+                    .with_focusable(self.focusable);
+                if let Some(label) = &self.accessible_label {
+                    button = button.with_accessible_label(label.clone());
+                }
+                let mut pod = ctx.create_pod(button);
                 pod.new_widget.options.disabled = self.disabled;
                 pod
             }),
@@ -231,6 +270,15 @@ where
         }
         if prev.access_state != self.access_state {
             widgets::Button::set_access_state(&mut element, self.access_state);
+        }
+        if prev.role != self.role {
+            widgets::Button::set_role(&mut element, self.role);
+        }
+        if prev.accessible_label != self.accessible_label {
+            widgets::Button::set_accessible_label(&mut element, self.accessible_label.clone());
+        }
+        if prev.focusable != self.focusable {
+            widgets::Button::set_focusable(&mut element, self.focusable);
         }
         ctx.with_id(BUTTON_CONTENT_VIEW_ID, |ctx| {
             View::<State, Action, _>::rebuild(
