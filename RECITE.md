@@ -102,3 +102,8 @@ non-focusable button behaves like `tabindex="-1"`: Tab skips it, but pointer pre
 pass never checks `accepts_focus`, and it still activates. AccessKit names `Button` roles from their
 descendant labels but not `Tab`, so tabs need the explicit label. AT-SPI exposes such a node as a
 `page tab` with `selectable` and `selected` states. Remove this when upstream buttons support tabs.
+
+`RadioButton` takes an explicit accessible label (`with_accessible_label`, `set_accessible_label`),
+and xilem's `radio_button` view adds `accessible_label`. Writer's settings segments show a short face
+("Left | Right") while each radio keeps a name that makes sense out of context ("Script pane on the
+left"). Remove this when upstream radio buttons accept a name separate from their label.

@@ -51,6 +51,7 @@ where
         callback,
         checked,
         disabled: false,
+        accessible_label: None,
     }
 }
 
@@ -63,12 +64,21 @@ pub struct RadioButton<F> {
     checked: bool,
     callback: F,
     disabled: bool,
+    accessible_label: Option<ArcStr>,
 }
 
 impl<F> RadioButton<F> {
     /// Set the disabled state of the widget.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Set the name assistive technology announces, in place of the visible label.
+    ///
+    /// Use it when a short visible label needs a fuller name to make sense out of context.
+    pub fn accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
         self
     }
 }
@@ -85,8 +95,11 @@ where
 
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         let element = ctx.with_action_widget(|ctx| {
-            let mut pod =
-                ctx.create_pod(widgets::RadioButton::new(self.checked, self.label.clone()));
+            let mut radio = widgets::RadioButton::new(self.checked, self.label.clone());
+            if let Some(label) = &self.accessible_label {
+                radio = radio.with_accessible_label(label.clone());
+            }
+            let mut pod = ctx.create_pod(radio);
             pod.new_widget.options.disabled = self.disabled;
             pod
         });
@@ -106,6 +119,9 @@ where
         }
         if prev.label != self.label {
             widgets::RadioButton::set_text(&mut element, self.label.clone());
+        }
+        if prev.accessible_label != self.accessible_label {
+            widgets::RadioButton::set_accessible_label(&mut element, self.accessible_label.clone());
         }
         if prev.checked != self.checked {
             widgets::RadioButton::set_checked(&mut element, self.checked);

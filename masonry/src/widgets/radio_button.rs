@@ -36,6 +36,7 @@ pub struct RadioButton {
     // FIXME - Remove label child, have this widget only be a box with a checkmark.
     label: WidgetPod<Label>,
     parent_group: Option<WidgetId>,
+    accessible_label: Option<ArcStr>,
 }
 
 impl RadioButton {
@@ -45,6 +46,7 @@ impl RadioButton {
             selected: checked,
             label: WidgetPod::new(Label::new(text)),
             parent_group: None,
+            accessible_label: None,
         }
     }
 
@@ -54,7 +56,18 @@ impl RadioButton {
             selected: checked,
             label: label.to_pod(),
             parent_group: None,
+            accessible_label: None,
         }
+    }
+
+    /// Builder-style method to set the name assistive technology announces for this radio button.
+    ///
+    /// The default is no explicit name, so the radio button is named from its label. An
+    /// explicit name replaces that, which lets a short visible label ("Left") carry a name
+    /// that still makes sense out of context ("Script pane on the left").
+    pub fn with_accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
     }
 }
 
@@ -81,6 +94,14 @@ impl RadioButton {
     /// We enforce this to be an `ArcStr` to make the allocation explicit.
     pub fn set_text(this: &mut WidgetMut<'_, Self>, new_text: ArcStr) {
         Label::set_text(&mut Self::label_mut(this), new_text);
+    }
+
+    /// Sets the name assistive technology announces for this radio button.
+    ///
+    /// See [`RadioButton::with_accessible_label`] for more details.
+    pub fn set_accessible_label(this: &mut WidgetMut<'_, Self>, label: Option<impl Into<ArcStr>>) {
+        this.widget.accessible_label = label.map(Into::into);
+        this.ctx.request_accessibility_update();
     }
 
     /// Get a mutable reference to the label.
@@ -379,6 +400,9 @@ impl Widget for RadioButton {
         node: &mut Node,
     ) {
         node.add_action(accesskit::Action::Click);
+        if let Some(label) = &self.accessible_label {
+            node.set_label(&**label);
+        }
         if self.selected {
             node.set_toggled(Toggled::True);
         } else {
@@ -512,5 +536,34 @@ mod tests {
 
         // We don't use assert_eq because we don't want rich assert
         assert!(image_1 == image_2);
+    }
+
+    #[test]
+    fn accessible_label_replaces_the_visible_label() {
+        let radio_tag = WidgetTag::unique();
+        let widget = NewWidget::new(RadioButton::new(true, "Left")).with_tag(radio_tag);
+        let widget = NewWidget::new(RadioGroup::new(widget));
+        let mut harness = TestHarness::create(default_property_set(), widget);
+        let radio_id = harness.get_widget(radio_tag).id();
+        let _ = harness.render();
+
+        let node = harness.access_node(radio_id).unwrap();
+        assert_eq!(node.role(), Role::RadioButton);
+        assert_eq!(node.label().as_deref(), Some("Left"));
+
+        harness.edit_widget(radio_tag, |mut radio| {
+            RadioButton::set_accessible_label(&mut radio, Some("Script pane on the left"));
+        });
+        let _ = harness.render();
+        let node = harness.access_node(radio_id).unwrap();
+        assert_eq!(node.label().as_deref(), Some("Script pane on the left"));
+        assert_eq!(node.toggled(), Some(Toggled::True));
+
+        harness.edit_widget(radio_tag, |mut radio| {
+            RadioButton::set_accessible_label(&mut radio, None::<ArcStr>);
+        });
+        let _ = harness.render();
+        let node = harness.access_node(radio_id).unwrap();
+        assert_eq!(node.label().as_deref(), Some("Left"));
     }
 }
