@@ -72,6 +72,12 @@ pub enum FlexBasis {
     Auto,
     /// Always use a zero basis for the child, regardless of its sizing wishes.
     Zero,
+    /// Use a fixed basis for the child, regardless of its sizing wishes.
+    ///
+    /// The child is ensured this main-axis length before any free space is distributed,
+    /// so a flexible child with a length basis never gets less than that length
+    /// while the container has room for every basis.
+    Length(Length),
 }
 
 /// Optional parameters for an item in a [`Flex`] container (row or column).
@@ -760,6 +766,9 @@ impl Widget for Flex {
                             //      then need to account for them here.
                             *basis_resolved = Length::ZERO;
                         }
+                        FlexBasis::Length(length) => {
+                            *basis_resolved = length;
+                        }
                     },
                     Child::Spacer {
                         basis,
@@ -806,6 +815,18 @@ impl Widget for Flex {
                                     // Flexible children with a zero basis want to reach
                                     // their target length purely with flex space.
                                     child_length.get() / *flex
+                                }
+                                FlexBasis::Length(length) => {
+                                    let child_length = ctx.compute_length(
+                                        widget,
+                                        main_auto,
+                                        context_size,
+                                        main,
+                                        cross_space,
+                                    );
+                                    // Flexible children with a length basis want flex space
+                                    // only for the part of their target the basis leaves out.
+                                    child_length.saturating_sub(length).get() / *flex
                                 }
                             }
                         } else {
@@ -987,6 +1008,10 @@ impl Widget for Flex {
                             //      then need to account for them here, and also
                             //      subtract the result for main_space.
                             *basis_resolved = Length::ZERO;
+                        }
+                        FlexBasis::Length(length) => {
+                            *basis_resolved = length;
+                            main_space = main_space.saturating_sub(*basis_resolved);
                         }
                     }
                     if *flex == 0. {
@@ -1458,6 +1483,31 @@ mod tests {
         assert_eq!(rect_3, Rect::new(67., 0., 100., 10.));
         assert_eq!(rect_1.x1, rect_2.x0);
         assert_eq!(rect_2.x1, rect_3.x0);
+    }
+
+    #[test]
+    fn length_basis_keeps_a_flexible_child_at_its_minimum() {
+        // The basis is taken first, and the free space is shared by flex factor.
+        for (width, expected_shared, expected_floored) in [(100, 2., 98.), (300, 102., 198.)] {
+            let shared = WidgetTag::unique();
+            let floored = WidgetTag::unique();
+            let widget = Flex::row()
+                .cross_axis_alignment(CrossAxisAlignment::Stretch)
+                .with(SizedBox::empty().prepare().with_tag(shared), 1.0)
+                .with(
+                    SizedBox::empty().prepare().with_tag(floored),
+                    FlexParams::new(1.0, FlexBasis::Length(96.px()), None),
+                )
+                .prepare()
+                .with_props(Gap::new(0.px()));
+
+            let harness = TestHarness::create_with_size(test_property_set(), widget, (width, 10));
+            let width_of =
+                |tag: WidgetTag<SizedBox>| harness.get_widget(tag).ctx().border_box().width();
+
+            assert_eq!(width_of(shared), expected_shared);
+            assert_eq!(width_of(floored), expected_floored);
+        }
     }
 
     #[test]

@@ -114,3 +114,8 @@ left"). Remove this when upstream radio buttons accept a name separate from thei
 order while keys its focused items leave unhandled still bubble to its scrolling, and scrolling now
 requests an accessibility update so the node's scroll position and actions stay current. Writer's
 picker results list uses it. Remove this when upstream virtual scroll offers both.
+
+`FlexBasis::Length` gives a flex child a fixed basis that it gets before free space is shared, so
+a flexible child keeps that minimum while the row has room for every basis. Writer's file tab uses
+it to stay at least 96px wide and grow from there. Remove this when upstream `Flex` supports
+minimum sizes for flexible children.
