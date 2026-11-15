@@ -3,6 +3,7 @@
 
 use std::marker::PhantomData;
 
+use masonry::core::ArcStr;
 use masonry::widgets;
 
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewMarker};
@@ -21,6 +22,8 @@ where
         constrain_horizontal: false,
         constrain_vertical: false,
         must_fill: false,
+        accessible_label: None,
+        focusable: true,
         phantom: PhantomData,
     }
 }
@@ -32,6 +35,8 @@ pub struct Portal<V, State, Action> {
     constrain_horizontal: bool,
     constrain_vertical: bool,
     must_fill: bool,
+    accessible_label: Option<ArcStr>,
+    focusable: bool,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -69,6 +74,23 @@ impl<V, State, Action> Portal<V, State, Action> {
         self.must_fill = must_fill;
         self
     }
+
+    /// Sets the name assistive technology announces for this scroll view.
+    ///
+    /// The default is no name.
+    pub fn accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Sets whether the portal itself can take keyboard focus.
+    ///
+    /// The default is `true`. When `false`, Tab skips the portal, and its keyboard scrolling
+    /// handles keys that a focused descendant leaves unhandled.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
 }
 
 impl<V, State, Action> ViewMarker for Portal<V, State, Action> {}
@@ -85,12 +107,15 @@ where
         // The Portal `View` doesn't get any messages directly (yet - scroll events?), so doesn't need to
         // use ctx.with_id.
         let (child, child_state) = self.child.build(ctx, app_state);
-        let widget_pod = ctx.create_pod(
-            widgets::Portal::new(child.new_widget)
-                .constrain_horizontal(self.constrain_horizontal)
-                .constrain_vertical(self.constrain_vertical)
-                .content_must_fill(self.must_fill),
-        );
+        let mut widget = widgets::Portal::new(child.new_widget)
+            .constrain_horizontal(self.constrain_horizontal)
+            .constrain_vertical(self.constrain_vertical)
+            .content_must_fill(self.must_fill)
+            .focusable(self.focusable);
+        if let Some(label) = &self.accessible_label {
+            widget = widget.accessible_label(label.clone());
+        }
+        let widget_pod = ctx.create_pod(widget);
         (widget_pod, child_state)
     }
 
@@ -110,6 +135,12 @@ where
         }
         if self.must_fill != prev.must_fill {
             widgets::Portal::set_content_must_fill(&mut element, self.must_fill);
+        }
+        if self.accessible_label != prev.accessible_label {
+            widgets::Portal::set_accessible_label(&mut element, self.accessible_label.clone());
+        }
+        if self.focusable != prev.focusable {
+            widgets::Portal::set_focusable(&mut element, self.focusable);
         }
 
         let child_element = widgets::Portal::child_mut(&mut element);

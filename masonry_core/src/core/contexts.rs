@@ -1576,6 +1576,20 @@ impl_context_method!(
             self.global_state.needs_pointer_pass = true;
         }
 
+        /// Indicates that [`Widget::accepts_focus`] may now return a different value.
+        ///
+        /// Masonry caches that value when the widget is added. This re-reads it in the
+        /// next update pass and refreshes the widget's accessibility node, which advertises
+        /// the `Focus` action only while the widget accepts focus.
+        ///
+        /// A widget that holds focus keeps it until focus moves elsewhere.
+        pub fn accepts_focus_changed(&mut self) {
+            trace!("accepts_focus_changed");
+            self.widget_state.accepts_focus_changed = true;
+            self.widget_state.needs_update_focusable = true;
+            self.request_accessibility_update();
+        }
+
         /// Indicates that your children have changed.
         ///
         /// Widgets must call this method after adding a new child.

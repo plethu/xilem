@@ -166,8 +166,10 @@ pub(crate) struct WidgetState {
     /// Should be immutable after `WidgetAdded` event.
     pub(crate) propagates_pointer_interaction: bool,
     /// Tracks whether widget gets text focus.
-    /// Should be immutable after `WidgetAdded` event.
+    /// Set on the `WidgetAdded` event and re-read when the widget reports a change.
     pub(crate) accepts_focus: bool,
+    /// The widget called `accepts_focus_changed`, so `accepts_focus` must be re-read.
+    pub(crate) accepts_focus_changed: bool,
 
     /// Tracks whether widget is eligible for IME events.
     /// Should be immutable after `WidgetAdded` event.
@@ -311,6 +313,7 @@ impl WidgetState {
             accepts_pointer_interaction: true,
             propagates_pointer_interaction: true,
             accepts_focus: false,
+            accepts_focus_changed: false,
             accepts_text_input: false,
             ime_area: None,
 
