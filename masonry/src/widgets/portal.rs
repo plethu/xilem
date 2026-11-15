@@ -7,7 +7,7 @@ use accesskit::{Node, Role};
 use tracing::{Span, trace_span};
 
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, LayoutCtx,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, ComposeCtx, EventCtx, FromDynWidget, LayoutCtx,
     MeasureCtx, NewWidget, NoAction, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
     PropertiesRef, Property, RegisterCtx, TextEvent, Update, UpdateCtx, UsesProperty, Widget,
     WidgetId, WidgetMut, WidgetPod,
@@ -36,8 +36,11 @@ const SCROLLBAR_ANIM_OVER_MILLIS: f32 = 300.;
 ///   and their ranges.
 /// - Handles `accesskit` scroll actions (`ScrollUp`/`ScrollDown`/`ScrollLeft`/`ScrollRight`) by
 ///   scrolling the viewport.
-/// - When this widget is focused, it handles basic keyboard scrolling (arrow keys, PageUp/Down,
-///   Home/End) *if the event wasn't already handled by a child*.
+/// - When this widget or one of its descendants is focused, it handles basic keyboard scrolling
+///   (arrow keys, PageUp/Down, Home/End) *if the event wasn't already handled by a child*.
+/// - [`accessible_label`](Self::accessible_label) names the scroll view for assistive technology.
+/// - [`focusable`](Self::focusable) removes the portal itself from the focus chain, leaving
+///   keyboard scrolling to focused descendants.
 ///
 /// When nested inside another scrolling container, child scroll widgets should call
 /// [`EventCtx::set_handled`](crate::core::EventCtx::set_handled) after scrolling to prevent
@@ -59,6 +62,8 @@ pub struct Portal<W: Widget + ?Sized> {
     scrollbar_vertical: WidgetPod<ScrollBar>,
     scrollbar_vertical_visible: bool,
     nanos_since_last_pointer_move: Option<u64>,
+    accessible_label: Option<ArcStr>,
+    focusable: bool,
 }
 
 // --- MARK: BUILDERS
@@ -78,6 +83,8 @@ impl<W: Widget + ?Sized> Portal<W> {
             scrollbar_vertical: WidgetPod::new(ScrollBar::new(Axis::Vertical, 0.0, 0.0)),
             scrollbar_vertical_visible: false,
             nanos_since_last_pointer_move: None,
+            accessible_label: None,
+            focusable: true,
         }
     }
 
@@ -120,6 +127,25 @@ impl<W: Widget + ?Sized> Portal<W> {
     /// If `true`, the child size is guaranteed to be at least the size of the portal.
     pub fn content_must_fill(mut self, must_fill: bool) -> Self {
         self.must_fill = must_fill;
+        self
+    }
+
+    /// Builder-style method to set the name assistive technology announces for this scroll view.
+    ///
+    /// The default is no name.
+    pub fn accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Builder-style method to set whether the portal itself can take keyboard focus.
+    ///
+    /// The default is `true`. A portal constrained on both axes never takes focus.
+    ///
+    /// When `false`, Tab skips the portal and its keyboard scrolling only runs for key events
+    /// that bubble up from a focused descendant and that the descendant left unhandled.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
         self
     }
 }
@@ -193,6 +219,8 @@ impl<W: Widget + ?Sized> Portal<W> {
         let changed = self.set_viewport_pos_raw(portal_size, content_size, pos);
         if changed {
             ctx.request_compose();
+            // The viewport position is part of this widget's accessibility node.
+            ctx.request_accessibility_update();
             self.update_scrollbars_from_viewport(ctx, portal_size, content_size);
         }
         changed
@@ -253,6 +281,7 @@ impl<W: Widget + ?Sized> Portal<W> {
 
         if changed {
             ctx.request_compose();
+            ctx.request_accessibility_update();
             self.update_scrollbars_from_viewport(ctx, portal_size, content_size);
         }
 
@@ -333,6 +362,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     /// See [`Portal::constrain_horizontal`] for more details.
     pub fn set_constrain_horizontal(this: &mut WidgetMut<'_, Self>, constrain: bool) {
         this.widget.constrain_horizontal = constrain;
+        this.ctx.accepts_focus_changed();
         this.ctx.request_layout();
     }
 
@@ -341,6 +371,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     /// See [`Portal::constrain_vertical`] for more details.
     pub fn set_constrain_vertical(this: &mut WidgetMut<'_, Self>, constrain: bool) {
         this.widget.constrain_vertical = constrain;
+        this.ctx.accepts_focus_changed();
         this.ctx.request_layout();
     }
 
@@ -353,6 +384,25 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
     pub fn set_content_must_fill(this: &mut WidgetMut<'_, Self>, must_fill: bool) {
         this.widget.must_fill = must_fill;
         this.ctx.request_layout();
+    }
+
+    /// Sets the name assistive technology announces for this scroll view.
+    ///
+    /// See [`Portal::accessible_label`] for more details.
+    pub fn set_accessible_label(this: &mut WidgetMut<'_, Self>, label: Option<impl Into<ArcStr>>) {
+        this.widget.accessible_label = label.map(Into::into);
+        this.ctx.request_accessibility_update();
+    }
+
+    /// Sets whether the portal itself can take keyboard focus.
+    ///
+    /// See [`Portal::focusable`] for more details.
+    /// If the portal holds focus when this turns it off, it keeps focus until focus moves.
+    pub fn set_focusable(this: &mut WidgetMut<'_, Self>, focusable: bool) {
+        if this.widget.focusable != focusable {
+            this.widget.focusable = focusable;
+            this.ctx.accepts_focus_changed();
+        }
     }
 
     /// Sets the scrolling "position" of the container.
@@ -373,6 +423,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Portal<W> {
             Self::vertical_scrollbar_mut(this).widget.cursor_progress = progress_y;
             Self::vertical_scrollbar_mut(this).ctx.request_render();
             this.ctx.request_compose();
+            this.ctx.request_accessibility_update();
         }
         pos_changed
     }
@@ -687,6 +738,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
 
                 self.pan_viewport_to_raw(portal_size, content_size, *target);
                 ctx.request_compose();
+                ctx.request_accessibility_update();
 
                 // TODO - There's a lot of code here that's duplicated from the `MouseWheel`
                 // event in `on_pointer_event`.
@@ -859,6 +911,9 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
         node: &mut Node,
     ) {
         node.set_clips_children();
+        if let Some(label) = &self.accessible_label {
+            node.set_label(&**label);
+        }
 
         let portal_size = ctx.content_box().size();
         let content_size = self.content_size;
@@ -913,7 +968,7 @@ impl<W: Widget + FromDynWidget + ?Sized> Widget for Portal<W> {
     }
 
     fn accepts_focus(&self) -> bool {
-        !(self.constrain_horizontal && self.constrain_vertical)
+        self.focusable && !(self.constrain_horizontal && self.constrain_vertical)
     }
 }
 
@@ -1088,6 +1143,70 @@ mod tests {
 
         let node = harness.access_node(portal_id).unwrap();
         assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn portal_accessible_label() {
+        let portal_tag = WidgetTag::named("portal");
+        let content = SizedBox::empty().size(300.px(), 300.px()).prepare();
+        let portal = NewWidget::new(Portal::new(content).accessible_label("Manuscript"))
+            .with_tag(portal_tag);
+
+        let mut harness = TestHarness::create_with_size(test_property_set(), portal, (100, 100));
+        let _ = harness.render();
+
+        let portal_id = harness.get_widget(portal_tag).id();
+        let node = harness.access_node(portal_id).unwrap();
+        assert_eq!(node.data().label(), Some("Manuscript"));
+
+        harness.edit_widget(portal_tag, |mut portal| {
+            Portal::set_accessible_label(&mut portal, None::<ArcStr>);
+        });
+        let _ = harness.render();
+
+        let node = harness.access_node(portal_id).unwrap();
+        assert_eq!(node.data().label(), None);
+    }
+
+    #[test]
+    fn unfocusable_portal_scrolls_from_focused_descendant() {
+        let portal_tag = WidgetTag::named("portal");
+        let button_tag = WidgetTag::named("button");
+        let content = Flex::column()
+            .with_fixed(NewWidget::new(Button::with_text("Inside")).with_tag(button_tag))
+            .with_fixed_spacer(500.px())
+            .prepare();
+        let portal = NewWidget::new(Portal::new(content).focusable(false)).with_tag(portal_tag);
+
+        let mut harness = TestHarness::create_with_size(test_property_set(), portal, (100, 100));
+        let _ = harness.render();
+
+        let portal_id = harness.get_widget(portal_tag).id();
+        let button_id = harness.get_widget(button_tag).id();
+        let node = harness.access_node(portal_id).unwrap();
+        assert!(!node.data().supports_action(accesskit::Action::Focus));
+
+        // Tab skips the portal and lands on its first focusable descendant.
+        harness.press_tab_key(false);
+        assert_eq!(harness.focused_widget_id(), Some(button_id));
+
+        // Keys the button leaves unhandled bubble up and scroll the portal.
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::PageDown)));
+        let _ = harness.render();
+        let node = harness.access_node(portal_id).unwrap();
+        assert!(node.data().scroll_y().unwrap_or(0.0) > 0.0);
+
+        // Turning focus back on puts the portal before the button in the focus chain.
+        harness.edit_widget(portal_tag, |mut portal| {
+            Portal::set_focusable(&mut portal, true);
+        });
+        let _ = harness.render();
+        let node = harness.access_node(portal_id).unwrap();
+        assert!(node.data().supports_action(accesskit::Action::Focus));
+
+        harness.focus_on(Some(button_id));
+        harness.press_tab_key(true);
+        assert_eq!(harness.focused_widget_id(), Some(portal_id));
     }
 
     // Helper function for panning tests

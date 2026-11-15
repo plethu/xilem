@@ -482,6 +482,11 @@ fn update_focusable_for_widget(node: ArenaMut<'_, WidgetArenaNode>) {
         return;
     }
 
+    if state.accepts_focus_changed {
+        state.accepts_focus = widget.accepts_focus();
+        state.accepts_focus_changed = false;
+    }
+
     state.descendant_is_focusable = false;
 
     if state.accepts_focus && !state.is_disabled && !state.is_stashed {

@@ -477,7 +477,9 @@ pub trait Widget: AsDynWidget + Any {
     ///
     /// If true, pressing Tab can focus this widget.
     ///
-    /// **Note:** The value returned by this method is cached at widget creation and can't be changed.
+    /// **Note:** The value returned by this method is cached at widget creation.
+    /// Call [`accepts_focus_changed`](crate::core::MutateCtx::accepts_focus_changed)
+    /// after a change that alters it.
     ///
     /// [text focus]: crate::doc::masonry_concepts#text-focus
     fn accepts_focus(&self) -> bool {
