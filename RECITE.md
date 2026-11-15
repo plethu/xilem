@@ -58,8 +58,10 @@ reordered widgets, scrolled viewports and layers, and diffs a repainted widget's
 so only changed draws count. It reports full damage on the first frame, on resize, scale factor and
 default property changes, around debug and inspector overlays, and past 60% of the window. The
 softbuffer presenter keeps a persistent framebuffer, re-rasterises only damaged rectangles widened
-to Vello CPU's 256×4 wide tiles with off-region draws culled, and presents with damage; exposes the
-window system requests present the whole frame. The wgpu presenters, including Vello CPU through
+to Vello CPU's 256×4 wide tiles with off-region draws culled. It presents only the damage on
+Wayland, whose compositor keeps the window's buffer. X11 and Win32 can discard window contents, and
+winit merges their redraw requests with Masonry's, so there every present covers the whole window,
+as do presents after unrequested redraws, resizes, scale changes and the window becoming visible. The wgpu presenters, including Vello CPU through
 wgpu, still render in full. Geometry and text match a full render exactly and image and gradient
 pixels within one unit. In Writer's gallery harness at 1200×800 with desk grain, typing into a
 Script draft re-rasterised about 5% of the window per keystroke, and rasterising fell from a 12 ms

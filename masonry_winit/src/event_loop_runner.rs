@@ -137,6 +137,10 @@ pub struct Window {
     pub(crate) base_color: Color,
     /// Whether Masonry asked for the pending redraw; other redraws come from the window system.
     redraw_requested: bool,
+    /// Whether the window system may have discarded or asked for the window's contents since the
+    /// last frame was handed to the presenter: an unrequested redraw, a resize, a scale factor
+    /// change or the window becoming visible.
+    host_invalidated: bool,
 }
 
 impl Window {
@@ -172,6 +176,7 @@ impl Window {
             ),
             base_color,
             redraw_requested: false,
+            host_invalidated: true,
         }
     }
 
@@ -632,8 +637,9 @@ impl MasonryState {
         let window = self.windows.get_mut(&handle_id).unwrap();
         // A redraw Masonry did not request comes from the window system, typically because
         // the window's contents were exposed and must be presented in full.
-        #[cfg(feature = "softbuffer_fallback")]
-        let expose = !window.redraw_requested;
+        if !window.redraw_requested {
+            window.host_invalidated = true;
+        }
         window.redraw_requested = false;
         let size = window.render_root.size();
         if size.width == 0 || size.height == 0 {
@@ -710,12 +716,14 @@ impl MasonryState {
             let surface = self.surfaces.get_mut(&handle_id).unwrap();
             Self::render(surface, window, frame, &self.render_cx, &mut self.renderer);
         } else {
+            // The presenter keeps a pending full present until one succeeds, so the flag is
+            // handed over here.
             #[cfg(feature = "softbuffer_fallback")]
             self.soft_surfaces.get_mut(&handle_id).unwrap().present(
                 &window.handle,
                 frame,
                 visual_layers.damage.rects(),
-                expose,
+                std::mem::take(&mut window.host_invalidated),
             );
         }
         #[cfg(feature = "tracy")]
@@ -1000,6 +1008,7 @@ impl MasonryState {
 
         match event {
             WinitWindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                window.host_invalidated = true;
                 window
                     .render_root
                     .handle_window_event(WindowEvent::Rescale(scale_factor));
@@ -1011,6 +1020,7 @@ impl MasonryState {
                 app_driver.on_close_requested(window.id, &mut DriverCtx::new(self, event_loop));
             }
             WinitWindowEvent::Resized(size) => {
+                window.host_invalidated = true;
                 #[cfg(target_os = "macos")]
                 {
                     self.resized_window = Some(handle_id);
@@ -1026,6 +1036,9 @@ impl MasonryState {
             WinitWindowEvent::Ime(ime) => {
                 let ime = winit_ime_to_masonry(ime);
                 window.render_root.handle_text_event(TextEvent::Ime(ime));
+            }
+            WinitWindowEvent::Occluded(false) => {
+                window.host_invalidated = true;
             }
             WinitWindowEvent::Focused(new_focus) => {
                 window
