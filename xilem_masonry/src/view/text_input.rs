@@ -3,7 +3,7 @@
 
 use masonry::core::{ArcStr, NewWidget, PropertySet};
 use masonry::parley::style::FontWeight;
-use masonry::parley::{FontFamily, FontFamilyName, GenericFamily, StyleProperty};
+use masonry::parley::{FontFamily, FontFamilyName, GenericFamily, LineHeight, StyleProperty};
 use masonry::peniko::Color;
 use masonry::properties::{CaretColor, ContentColor, PlaceholderColor, SelectionColor};
 use masonry::widgets::{self, TextAction};
@@ -89,6 +89,7 @@ where
         text_alignment: TextAlign::default(),
         text_size: masonry::theme::TEXT_SIZE_NORMAL,
         weight: FontWeight::NORMAL,
+        line_height: masonry::theme::TEXT_LINE_HEIGHT,
         font: FontFamily::Single(FontFamilyName::Generic(GenericFamily::SystemUi)),
         insert_newline: InsertNewline::default(),
         disabled: false,
@@ -110,6 +111,7 @@ pub struct TextInput<State: 'static, Action> {
     text_alignment: TextAlign,
     text_size: f32,
     weight: FontWeight,
+    line_height: LineHeight,
     font: FontFamily<'static>,
     insert_newline: InsertNewline,
     disabled: bool,
@@ -167,6 +169,14 @@ impl<State: 'static, Action: 'static> TextInput<State, Action> {
     /// Sets font weight.
     pub fn weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
+        self
+    }
+
+    /// Sets line height.
+    ///
+    /// The default is [`TEXT_LINE_HEIGHT`](masonry::theme::TEXT_LINE_HEIGHT).
+    pub fn line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
         self
     }
 
@@ -244,6 +254,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
             .with_insert_newline(self.insert_newline)
             .with_style(StyleProperty::FontSize(self.text_size))
             .with_style(StyleProperty::FontWeight(self.weight))
+            .with_style(StyleProperty::LineHeight(self.line_height))
             .with_style(StyleProperty::FontFamily(self.font.clone()));
 
         // TODO - Replace this with properties on the TextInput view
@@ -322,6 +333,12 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
         if prev.weight != self.weight {
             widgets::TextArea::insert_style(&mut text_area, StyleProperty::FontWeight(self.weight));
         }
+        if prev.line_height != self.line_height {
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::LineHeight(self.line_height),
+            );
+        }
         if prev.font != self.font {
             widgets::TextArea::insert_style(
                 &mut text_area,
@@ -378,5 +395,67 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
                 MessageResult::Stale
             }
         }
+    }
+}
+
+// --- MARK: TESTS
+#[cfg(test)]
+mod tests {
+    use masonry::core::{NewWidget, WidgetId};
+    use masonry::parley::LineHeight;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::{self, Flex};
+
+    use super::{TextInput, text_input};
+    use crate::core::View;
+    use crate::test_util::view_ctx;
+
+    const TEXT_SIZE: f32 = 10.0;
+
+    fn input(line_height: LineHeight) -> TextInput<(), ()> {
+        text_input("one\ntwo".into(), |_: &mut (), _| {})
+            .text_size(TEXT_SIZE)
+            .line_height(line_height)
+    }
+
+    fn text_height(harness: &TestHarness<Flex>, area: WidgetId) -> f64 {
+        harness
+            .get_widget_with_id(area)
+            .ctx()
+            .content_box()
+            .height()
+    }
+
+    #[test]
+    fn line_height_applies_on_build_and_rebuild() {
+        let mut ctx = view_ctx();
+        let first = input(LineHeight::FontSizeRelative(1.45));
+        let (pod, ()) = View::<(), (), _>::build(&first, &mut ctx, &mut ());
+        let input_id = pod.new_widget.id();
+        let area_id = pod.new_widget.widget.area_pod().id();
+        let root = NewWidget::new(Flex::column().with_fixed(pod.new_widget));
+        let mut harness = TestHarness::create(default_property_set(), root);
+
+        // Two lines, laid out with the requested line height from the first frame.
+        let expected = f64::from(2.0 * TEXT_SIZE * 1.45);
+        let height = text_height(&harness, area_id);
+        assert!((height - expected).abs() < 0.5, "{height} != {expected}");
+
+        let second = input(LineHeight::FontSizeRelative(2.0));
+        harness.edit_widget_with_id(input_id, |mut element| {
+            View::<(), (), _>::rebuild(
+                &second,
+                &first,
+                &mut (),
+                &mut ctx,
+                element.downcast::<widgets::TextInput>(),
+                &mut (),
+            );
+        });
+
+        let expected = f64::from(2.0 * TEXT_SIZE * 2.0);
+        let height = text_height(&harness, area_id);
+        assert!((height - expected).abs() < 0.5, "{height} != {expected}");
     }
 }

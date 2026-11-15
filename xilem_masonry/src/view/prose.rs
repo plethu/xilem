@@ -4,7 +4,7 @@
 use std::marker::PhantomData;
 
 use masonry::core::{ArcStr, NewWidget, PropertySet, StyleProperty};
-use masonry::parley::FontWeight;
+use masonry::parley::{FontWeight, LineHeight};
 use masonry::properties::{ContentColor, LineBreaking};
 use masonry::widgets;
 
@@ -20,6 +20,7 @@ pub fn prose<State, Action>(content: impl Into<ArcStr>) -> Prose<State, Action> 
         text_size: masonry::theme::TEXT_SIZE_NORMAL,
         line_break_mode: LineBreaking::WordWrap,
         weight: FontWeight::NORMAL,
+        line_height: masonry::theme::TEXT_LINE_HEIGHT,
         phantom: PhantomData,
     }
 }
@@ -44,6 +45,7 @@ pub struct Prose<State, Action> {
     text_size: f32,
     line_break_mode: LineBreaking,
     weight: FontWeight,
+    line_height: LineHeight,
     phantom: PhantomData<fn(State) -> Action>,
     // TODO: disabled: bool,
     // TODO: add more attributes of `masonry::widgets::Prose`
@@ -82,6 +84,14 @@ impl<State, Action> Prose<State, Action> {
         self.weight = weight;
         self
     }
+
+    /// Sets line height.
+    ///
+    /// The default is [`TEXT_LINE_HEIGHT`](masonry::theme::TEXT_LINE_HEIGHT).
+    pub fn line_height(mut self, line_height: LineHeight) -> Self {
+        self.line_height = line_height;
+        self
+    }
 }
 
 fn line_break_clips(linebreaking: LineBreaking) -> bool {
@@ -98,6 +108,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
             .with_text_alignment(self.text_alignment)
             .with_style(StyleProperty::FontSize(self.text_size))
             .with_style(StyleProperty::FontWeight(self.weight))
+            .with_style(StyleProperty::LineHeight(self.line_height))
             .with_word_wrap(self.line_break_mode == LineBreaking::WordWrap);
 
         // TODO - Replace this with properties on the Prose view
@@ -148,6 +159,12 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
         if prev.weight != self.weight {
             widgets::TextArea::insert_style(&mut text_area, StyleProperty::FontWeight(self.weight));
         }
+        if prev.line_height != self.line_height {
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::LineHeight(self.line_height),
+            );
+        }
         if prev.line_break_mode != self.line_break_mode {
             widgets::TextArea::set_word_wrap(
                 &mut text_area,
@@ -172,5 +189,67 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
             "Message arrived in Prose::message, but Prose doesn't consume any messages, this is a bug"
         );
         MessageResult::Stale
+    }
+}
+
+// --- MARK: TESTS
+#[cfg(test)]
+mod tests {
+    use masonry::core::{NewWidget, WidgetId};
+    use masonry::parley::LineHeight;
+    use masonry::testing::TestHarness;
+    use masonry::theme::default_property_set;
+    use masonry::widgets::{self, Flex};
+
+    use super::{Prose, prose};
+    use crate::core::View;
+    use crate::test_util::view_ctx;
+
+    const TEXT_SIZE: f32 = 10.0;
+
+    fn text(line_height: LineHeight) -> Prose<(), ()> {
+        prose("one\ntwo")
+            .text_size(TEXT_SIZE)
+            .line_height(line_height)
+    }
+
+    fn text_height(harness: &mut TestHarness<Flex>, prose: WidgetId) -> f64 {
+        harness.edit_widget_with_id(prose, |mut element| {
+            let mut prose = element.downcast::<widgets::Prose>();
+            widgets::Prose::text_mut(&mut prose)
+                .ctx
+                .content_box()
+                .height()
+        })
+    }
+
+    #[test]
+    fn line_height_applies_on_build_and_rebuild() {
+        let mut ctx = view_ctx();
+        let first = text(LineHeight::FontSizeRelative(1.45));
+        let (pod, ()) = View::<(), (), _>::build(&first, &mut ctx, &mut ());
+        let prose_id = pod.new_widget.id();
+        let root = NewWidget::new(Flex::column().with_fixed(pod.new_widget));
+        let mut harness = TestHarness::create(default_property_set(), root);
+
+        let expected = f64::from(2.0 * TEXT_SIZE * 1.45);
+        let height = text_height(&mut harness, prose_id);
+        assert!((height - expected).abs() < 0.5, "{height} != {expected}");
+
+        let second = text(LineHeight::FontSizeRelative(2.0));
+        harness.edit_widget_with_id(prose_id, |mut element| {
+            View::<(), (), _>::rebuild(
+                &second,
+                &first,
+                &mut (),
+                &mut ctx,
+                element.downcast::<widgets::Prose>(),
+                &mut (),
+            );
+        });
+
+        let expected = f64::from(2.0 * TEXT_SIZE * 2.0);
+        let height = text_height(&mut harness, prose_id);
+        assert!((height - expected).abs() < 0.5, "{height} != {expected}");
     }
 }
