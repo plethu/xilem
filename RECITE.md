@@ -91,3 +91,14 @@ focusability while focused keeps focus until it moves. Remove this when upstream
 names, for selected picker and list rows, and for toggles such as "Pin reference". A `toggled` value
 makes AT-SPI expose a toggle button with a pressed state. `DisclosureButton` reports its disclosed
 state as `expanded` and advertises `Click`. Remove this when upstream buttons report these states.
+
+`Button` also takes a role override (`with_role`, `set_role`), an explicit accessible label
+(`with_accessible_label`, `set_accessible_label`) and a `focusable` flag (`with_focusable`,
+`set_focusable`); xilem's `button` view adds `role`, `accessible_label` and `focusable`. Writer
+builds roving-focus tab lists from them: `Role::Tab` buttons with `selected`, inside its own
+`TabList` group, where only the selected tab is focusable and Writer handles the arrow keys. A
+non-focusable button behaves like `tabindex="-1"`: Tab skips it, but pointer presses,
+`request_focus`, `set_focus` and the AccessKit `Focus` action still focus it, since Masonry's focus
+pass never checks `accepts_focus`, and it still activates. AccessKit names `Button` roles from their
+descendant labels but not `Tab`, so tabs need the explicit label. AT-SPI exposes such a node as a
+`page tab` with `selectable` and `selected` states. Remove this when upstream buttons support tabs.
