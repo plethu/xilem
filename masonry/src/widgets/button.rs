@@ -12,7 +12,7 @@ use crate::core::MeasureCtx;
 use crate::core::keyboard::{Key, NamedKey};
 use crate::core::pointer::PointerButton;
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, EventCtx, LayoutCtx, NewWidget, PaintCtx,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, EventCtx, LayoutCtx, NewWidget, PaintCtx,
     PointerButtonEvent, PointerEvent, PropertiesMut, PropertiesRef, RegisterCtx, TextEvent, Update,
     UpdateCtx, Widget, WidgetId, WidgetMut, WidgetPod,
 };
@@ -34,6 +34,9 @@ use crate::widgets::Label;
 pub struct Button {
     child: WidgetPod<dyn Widget>,
     access_state: ButtonAccessState,
+    role: Role,
+    accessible_label: Option<ArcStr>,
+    focusable: bool,
 }
 
 /// Accessibility states a [`Button`] reports on its node.
@@ -72,6 +75,9 @@ impl Button {
         Self {
             child: child.erased().to_pod(),
             access_state: ButtonAccessState::default(),
+            role: Role::Button,
+            accessible_label: None,
+            focusable: true,
         }
     }
 
@@ -102,6 +108,45 @@ impl Button {
     pub fn access_state(&self) -> ButtonAccessState {
         self.access_state
     }
+
+    /// Builder-style method to set the accessibility role this button reports.
+    ///
+    /// The default is [`Role::Button`]. Use [`Role::Tab`] with a `selected`
+    /// [access state](ButtonAccessState) for a tab inside a [`Role::TabList`] container.
+    /// The role only changes what assistive technology is told; activation is unchanged.
+    ///
+    /// AccessKit names a [`Role::Button`] from its descendant labels, but not a [`Role::Tab`];
+    /// give such a button an [accessible label](Self::with_accessible_label).
+    pub fn with_role(mut self, role: Role) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// Builder-style method to set the name assistive technology announces for this button.
+    ///
+    /// The default is no explicit name, so a [`Role::Button`] is named from its descendant
+    /// labels. An explicit name replaces that.
+    pub fn with_accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Builder-style method to set whether Tab and Shift+Tab can focus this button.
+    ///
+    /// The default is `true`. A button that isn't focusable behaves like an HTML element with
+    /// `tabindex="-1"`: Tab skips it, but pointer presses, [`EventCtx::request_focus`],
+    /// [`EventCtx::set_focus`] and the AccessKit `Focus` action can still focus it, and it
+    /// still activates from pointer clicks, keys while focused and the AccessKit `Click` action.
+    /// This supports roving focus, where only the selected tab of a tab list is a Tab stop.
+    pub fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
+
+    /// Returns the accessibility role this button reports.
+    pub fn role(&self) -> Role {
+        self.role
+    }
 }
 
 // --- MARK: WIDGETMUT
@@ -126,6 +171,36 @@ impl Button {
         if this.widget.access_state != access_state {
             this.widget.access_state = access_state;
             this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Sets the accessibility role this button reports.
+    ///
+    /// See [`Button::with_role`] for more details.
+    pub fn set_role(this: &mut WidgetMut<'_, Self>, role: Role) {
+        if this.widget.role != role {
+            this.widget.role = role;
+            this.ctx.request_accessibility_update();
+        }
+    }
+
+    /// Sets the name assistive technology announces for this button.
+    ///
+    /// See [`Button::with_accessible_label`] for more details.
+    pub fn set_accessible_label(this: &mut WidgetMut<'_, Self>, label: Option<impl Into<ArcStr>>) {
+        this.widget.accessible_label = label.map(Into::into);
+        this.ctx.request_accessibility_update();
+    }
+
+    /// Sets whether Tab and Shift+Tab can focus this button.
+    ///
+    /// See [`Button::with_focusable`] for more details. A focused button keeps focus when
+    /// this turns off, so a roving-focus tab list can make the newly focused tab focusable
+    /// and the previous one unfocusable in any order.
+    pub fn set_focusable(this: &mut WidgetMut<'_, Self>, focusable: bool) {
+        if this.widget.focusable != focusable {
+            this.widget.focusable = focusable;
+            this.ctx.accepts_focus_changed();
         }
     }
 }
@@ -264,16 +339,24 @@ impl Widget for Button {
     }
 
     fn accessibility_role(&self) -> Role {
-        Role::Button
+        self.role
     }
 
     fn accessibility(
         &mut self,
-        _ctx: &mut AccessCtx<'_>,
+        ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
         node: &mut Node,
     ) {
         node.add_action(accesskit::Action::Click);
+        // Masonry only advertises `Focus` for widgets in the Tab order, but a button that
+        // isn't a Tab stop still takes focus, like `tabindex="-1"`.
+        if !self.focusable && !ctx.is_disabled() {
+            node.add_action(accesskit::Action::Focus);
+        }
+        if let Some(label) = &self.accessible_label {
+            node.set_label(&**label);
+        }
 
         let ButtonAccessState {
             expanded,
@@ -300,8 +383,8 @@ impl Widget for Button {
     }
 
     fn accepts_focus(&self) -> bool {
-        // Buttons can be tab-focused...
-        true
+        // Buttons can be tab-focused, unless they opted out.
+        self.focusable
     }
 
     fn accepts_text_input(&self) -> bool {
@@ -435,6 +518,135 @@ mod tests {
         let node = harness.access_node(button_id).unwrap();
         assert_eq!(node.data().is_expanded(), Some(true));
         assert_eq!(node.data().is_selected(), None);
+    }
+
+    #[test]
+    fn tab_role_and_label() {
+        let state = ButtonAccessState {
+            selected: Some(true),
+            ..ButtonAccessState::default()
+        };
+        let widget = NewWidget::new(
+            Button::with_text("Outline")
+                .with_role(Role::Tab)
+                .with_access_state(state),
+        );
+        let mut harness = TestHarness::create(test_property_set(), widget);
+        let button_id = harness.root_id();
+        let _ = harness.render();
+
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.role(), Role::Tab);
+        assert_eq!(node.data().is_selected(), Some(true));
+        // AccessKit names buttons, but not tabs, from their descendant labels.
+        assert_eq!(node.label(), None);
+
+        harness.edit_root_widget(|mut button| {
+            Button::set_accessible_label(&mut button, Some("Outline"));
+        });
+        let _ = harness.render();
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.label().as_deref(), Some("Outline"));
+
+        harness.edit_root_widget(|mut button| {
+            Button::set_role(&mut button, Role::Button);
+            Button::set_accessible_label(&mut button, None::<ArcStr>);
+        });
+        let _ = harness.render();
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.role(), Role::Button);
+        assert_eq!(node.label().as_deref(), Some("Outline"));
+    }
+
+    #[test]
+    fn unfocusable_buttons_support_roving_focus() {
+        let tags = [
+            WidgetTag::named("first"),
+            WidgetTag::named("selected"),
+            WidgetTag::named("third"),
+        ];
+        let after = WidgetTag::named("after");
+        let tab = |text: &str, tag, focusable| {
+            NewWidget::new(Button::with_text(text).with_focusable(focusable)).with_tag(tag)
+        };
+        let widget = Flex::row()
+            .with_fixed(tab("First", tags[0], false))
+            .with_fixed(tab("Selected", tags[1], true))
+            .with_fixed(tab("Third", tags[2], false))
+            .with_fixed(NewWidget::new(Button::with_text("After")).with_tag(after))
+            .prepare();
+        let mut harness = TestHarness::create(test_property_set(), widget);
+        let [first, selected, third] = tags.map(|tag| harness.get_widget(tag).id());
+        let after = harness.get_widget(after).id();
+        let _ = harness.render();
+
+        // Only the focusable tab is a Tab stop, but every tab advertises `Focus`.
+        harness.press_tab_key(false);
+        assert_eq!(harness.focused_widget_id(), Some(selected));
+        harness.press_tab_key(false);
+        assert_eq!(harness.focused_widget_id(), Some(after));
+        for id in [first, selected, third] {
+            let node = harness.access_node(id).unwrap();
+            assert!(node.data().supports_action(accesskit::Action::Focus));
+        }
+
+        // Programmatic and AccessKit focus reach a tab that isn't a Tab stop.
+        harness.focus_on(Some(first));
+        assert_eq!(harness.focused_widget_id(), Some(first));
+        harness.process_access_event(accesskit::ActionRequest {
+            action: accesskit::Action::Focus,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: third.to_raw().into(),
+            data: None,
+        });
+        assert_eq!(harness.focused_widget_id(), Some(third));
+
+        // Keys, pointer clicks and AccessKit clicks still activate it.
+        harness.process_text_event(TextEvent::key_up(Key::Named(NamedKey::Enter)));
+        assert_eq!(
+            harness.pop_action(),
+            Some((ButtonPress { button: None }, third))
+        );
+        harness.mouse_click_on(first, Some(PointerButton::Primary));
+        assert_eq!(
+            harness.pop_action(),
+            Some((
+                ButtonPress {
+                    button: Some(PointerButton::Primary)
+                },
+                first
+            ))
+        );
+        assert_eq!(harness.focused_widget_id(), Some(first));
+        // `accessibility_click_on` doesn't flush actions, so send the request directly.
+        harness.process_access_event(accesskit::ActionRequest {
+            action: accesskit::Action::Click,
+            target_tree: accesskit::TreeId::ROOT,
+            target_node: third.to_raw().into(),
+            data: None,
+        });
+        assert_eq!(
+            harness.pop_action(),
+            Some((ButtonPress { button: None }, third))
+        );
+
+        // Rove: make the new tab a Tab stop, focus it, then drop the old one.
+        harness.edit_widget(tags[2], |mut button| {
+            Button::set_focusable(&mut button, true);
+        });
+        harness.focus_on(Some(third));
+        harness.edit_widget(tags[1], |mut button| {
+            Button::set_focusable(&mut button, false);
+        });
+        assert_eq!(harness.focused_widget_id(), Some(third));
+
+        harness.focus_on(Some(after));
+        harness.press_tab_key(true);
+        assert_eq!(harness.focused_widget_id(), Some(third));
+        // The other tabs are skipped, so Shift+Tab wraps around to the last Tab stop.
+        harness.press_tab_key(true);
+        assert_eq!(harness.focused_widget_id(), Some(after));
+        assert_ne!(harness.focused_widget_id(), Some(selected));
     }
 
     #[test]
