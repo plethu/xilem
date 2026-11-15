@@ -50,3 +50,19 @@ the same 60 fps and edit-to-paint (plethu/recite#283). The choice is logged with
 `presenter="softbuffer"`, and `MASONRY_IMAGING_BACKEND=softbuffer|vello_cpu|vello` overrides it.
 Remove this when Masonry presents CPU frames without wgpu itself.
 
+
+Masonry's paint pass also reports damage regions (linebender/xilem#789): `VisualLayerPlan::damage`
+lists the window rectangles that changed since the previous frame, from each widget's recorded draw
+bounds rather than its layout box, so it covers moved, resized, stashed, added, removed and
+reordered widgets, scrolled viewports and layers, and diffs a repainted widget's old and new scenes
+so only changed draws count. It reports full damage on the first frame, on resize, scale factor and
+default property changes, around debug and inspector overlays, and past 60% of the window. The
+softbuffer presenter keeps a persistent framebuffer, re-rasterises only damaged rectangles widened
+to Vello CPU's 256×4 wide tiles with off-region draws culled, and presents with damage; exposes the
+window system requests present the whole frame. The wgpu presenters, including Vello CPU through
+wgpu, still render in full. Geometry and text match a full render exactly and image and gradient
+pixels within one unit. In Writer's gallery harness at 1200×800 with desk grain, typing into a
+Script draft re-rasterised about 5% of the window per keystroke, and rasterising fell from a 12 ms
+p50 to 3.4 ms with identical pixels; damage tracking added about 0.15 ms per redraw with Masonry
+optimised and about 1 ms unoptimised. Remove this when Masonry reports damage and a host presents
+it upstream.
