@@ -4,9 +4,10 @@
 use std::any::type_name;
 use std::marker::PhantomData;
 
+use masonry::accesskit::Toggled;
 use masonry::core::ArcStr;
 pub use masonry::core::PointerButton;
-use masonry::widgets::{self, ButtonPress};
+use masonry::widgets::{self, ButtonAccessState, ButtonPress};
 
 use crate::core::{MessageCtx, MessageResult, Mut, View, ViewId, ViewMarker, ViewPathTracker};
 use crate::view::{Label, label};
@@ -89,6 +90,7 @@ pub fn button<
             _ => MessageResult::Nop,
         },
         disabled: false,
+        access_state: ButtonAccessState::default(),
         phantom: PhantomData,
     }
 }
@@ -133,6 +135,7 @@ pub fn button_any_pointer<State: 'static, Action, V: WidgetView<State, Action>>(
         child,
         callback: move |state: &mut State, button| MessageResult::Action(callback(state, button)),
         disabled: false,
+        access_state: ButtonAccessState::default(),
         phantom: PhantomData,
     }
 }
@@ -145,6 +148,7 @@ pub struct Button<State, Action, F, V> {
     child: V,
     callback: F,
     disabled: bool,
+    access_state: ButtonAccessState,
     phantom: PhantomData<fn(State) -> Action>,
 }
 
@@ -152,6 +156,32 @@ impl<State, Action, F, V> Button<State, Action, F, V> {
     /// Set the disabled state of the widget.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Reports whether the content this button controls is expanded or collapsed.
+    ///
+    /// Screen readers announce this state, so a disclosure button's name doesn't need arrows.
+    /// Without this call the button reports no expanded state.
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.access_state.expanded = Some(expanded);
+        self
+    }
+
+    /// Reports whether this button is the selected item, for example in a picker, list or tab row.
+    ///
+    /// Without this call the button reports no selected state.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.access_state.selected = Some(selected);
+        self
+    }
+
+    /// Reports this button as a toggle button that is pressed or not.
+    ///
+    /// Takes a `bool` or a [`Toggled`], whose `Mixed` value reports a partly pressed state.
+    /// Without this call the button is a plain button.
+    pub fn toggled(mut self, toggled: impl Into<Toggled>) -> Self {
+        self.access_state.toggled = Some(toggled.into());
         self
     }
 }
@@ -178,7 +208,9 @@ where
         });
         (
             ctx.with_action_widget(|ctx| {
-                let mut pod = ctx.create_pod(widgets::Button::new(child.new_widget));
+                let mut pod = ctx.create_pod(
+                    widgets::Button::new(child.new_widget).with_access_state(self.access_state),
+                );
                 pod.new_widget.options.disabled = self.disabled;
                 pod
             }),
@@ -196,6 +228,9 @@ where
     ) {
         if prev.disabled != self.disabled {
             element.ctx.set_disabled(self.disabled);
+        }
+        if prev.access_state != self.access_state {
+            widgets::Button::set_access_state(&mut element, self.access_state);
         }
         ctx.with_id(BUTTON_CONTENT_VIEW_ID, |ctx| {
             View::<State, Action, _>::rebuild(

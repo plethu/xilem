@@ -4,7 +4,7 @@
 use std::any::TypeId;
 use std::sync::Arc;
 
-use accesskit::{Node, Role};
+use accesskit::{Node, Role, Toggled};
 use include_doc_path::include_doc_path;
 use tracing::{Span, trace, trace_span};
 
@@ -33,6 +33,24 @@ use crate::widgets::Label;
 )]
 pub struct Button {
     child: WidgetPod<dyn Widget>,
+    access_state: ButtonAccessState,
+}
+
+/// Accessibility states a [`Button`] reports on its node.
+///
+/// A `None` field leaves that state off the node, so assistive technology doesn't announce it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ButtonAccessState {
+    /// Whether the content this button controls is expanded (`true`) or collapsed (`false`).
+    ///
+    /// Use this for disclosure buttons instead of putting arrows in the button's name.
+    pub expanded: Option<bool>,
+    /// Whether this button is the selected item, for example in a picker, list or tab row.
+    pub selected: Option<bool>,
+    /// Whether this toggle button is pressed.
+    ///
+    /// Any value makes platforms expose the button as a toggle button.
+    pub toggled: Option<Toggled>,
 }
 
 // --- MARK: BUILDERS
@@ -53,6 +71,7 @@ impl Button {
     pub fn new(child: NewWidget<impl Widget + ?Sized>) -> Self {
         Self {
             child: child.erased().to_pod(),
+            access_state: ButtonAccessState::default(),
         }
     }
 
@@ -69,6 +88,20 @@ impl Button {
     pub fn with_text(text: impl Into<Arc<str>>) -> Self {
         Self::new(Label::new(text).prepare())
     }
+
+    /// Builder-style method to set the expanded, selected and toggled states
+    /// this button reports to assistive technology.
+    ///
+    /// The default reports none of them.
+    pub fn with_access_state(mut self, access_state: ButtonAccessState) -> Self {
+        self.access_state = access_state;
+        self
+    }
+
+    /// Returns the expanded, selected and toggled states this button reports.
+    pub fn access_state(&self) -> ButtonAccessState {
+        self.access_state
+    }
 }
 
 // --- MARK: WIDGETMUT
@@ -84,6 +117,16 @@ impl Button {
     /// Returns a mutable reference to the child.
     pub fn child_mut<'t>(this: &'t mut WidgetMut<'_, Self>) -> WidgetMut<'t, dyn Widget> {
         this.ctx.get_mut(&mut this.widget.child)
+    }
+
+    /// Sets the expanded, selected and toggled states this button reports.
+    ///
+    /// See [`Button::with_access_state`] for more details.
+    pub fn set_access_state(this: &mut WidgetMut<'_, Self>, access_state: ButtonAccessState) {
+        if this.widget.access_state != access_state {
+            this.widget.access_state = access_state;
+            this.ctx.request_accessibility_update();
+        }
     }
 }
 
@@ -231,6 +274,21 @@ impl Widget for Button {
         node: &mut Node,
     ) {
         node.add_action(accesskit::Action::Click);
+
+        let ButtonAccessState {
+            expanded,
+            selected,
+            toggled,
+        } = self.access_state;
+        if let Some(expanded) = expanded {
+            node.set_expanded(expanded);
+        }
+        if let Some(selected) = selected {
+            node.set_selected(selected);
+        }
+        if let Some(toggled) = toggled {
+            node.set_toggled(toggled);
+        }
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -321,6 +379,62 @@ mod tests {
         harness.mouse_button_press(None);
 
         assert_eq!(harness.focused_widget_id(), Some(button_id));
+    }
+
+    #[test]
+    fn access_state() {
+        let widget = NewWidget::new(Button::with_text("Pin reference"));
+        let mut harness = TestHarness::create(test_property_set(), widget);
+        let button_id = harness.root_id();
+        let _ = harness.render();
+
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.data().is_expanded(), None);
+        assert_eq!(node.data().is_selected(), None);
+        assert_eq!(node.data().toggled(), None);
+
+        harness.edit_root_widget(|mut button| {
+            Button::set_access_state(
+                &mut button,
+                ButtonAccessState {
+                    expanded: Some(false),
+                    selected: Some(true),
+                    toggled: Some(Toggled::True),
+                },
+            );
+        });
+        let _ = harness.render();
+
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.data().is_expanded(), Some(false));
+        assert_eq!(node.data().is_selected(), Some(true));
+        assert_eq!(node.data().toggled(), Some(Toggled::True));
+
+        harness.edit_root_widget(|mut button| {
+            Button::set_access_state(&mut button, ButtonAccessState::default());
+        });
+        let _ = harness.render();
+
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.data().is_expanded(), None);
+        assert_eq!(node.data().is_selected(), None);
+        assert_eq!(node.data().toggled(), None);
+    }
+
+    #[test]
+    fn access_state_on_mount() {
+        let state = ButtonAccessState {
+            expanded: Some(true),
+            ..ButtonAccessState::default()
+        };
+        let widget = NewWidget::new(Button::with_text("Details").with_access_state(state));
+        let mut harness = TestHarness::create(test_property_set(), widget);
+        let button_id = harness.root_id();
+        let _ = harness.render();
+
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.data().is_expanded(), Some(true));
+        assert_eq!(node.data().is_selected(), None);
     }
 
     #[test]

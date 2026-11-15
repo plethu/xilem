@@ -23,6 +23,8 @@ const DEFAULT_LENGTH: Length = Length::const_px(8.);
 
 /// A triangle button that points towards the right when undisclosed
 /// and points towards the bottom when disclosed.
+///
+/// Its accessibility node reports the disclosed state as `expanded`.
 #[derive(Default)]
 pub struct DisclosureButton {
     is_disclosed: bool,
@@ -207,8 +209,10 @@ impl Widget for DisclosureButton {
         &mut self,
         _ctx: &mut AccessCtx<'_>,
         _props: &PropertiesRef<'_>,
-        _node: &mut accesskit::Node,
+        node: &mut accesskit::Node,
     ) {
+        node.add_action(accesskit::Action::Click);
+        node.set_expanded(self.is_disclosed);
     }
 
     fn children_ids(&self) -> ChildrenIds {
@@ -217,5 +221,38 @@ impl Widget for DisclosureButton {
 
     fn accepts_focus(&self) -> bool {
         true
+    }
+}
+
+// --- MARK: TESTS
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::NewWidget;
+    use crate::testing::TestHarness;
+    use crate::theme::test_property_set;
+
+    #[test]
+    fn reports_expanded_state() {
+        let widget = NewWidget::new(DisclosureButton::new(false));
+        let mut harness = TestHarness::create(test_property_set(), widget);
+        let id = harness.root_id();
+        let _ = harness.render();
+
+        let node = harness.access_node(id).unwrap();
+        assert_eq!(node.data().is_expanded(), Some(false));
+        assert!(node.data().supports_action(accesskit::Action::Click));
+
+        harness.accessibility_click_on(id);
+        let _ = harness.render();
+        let node = harness.access_node(id).unwrap();
+        assert_eq!(node.data().is_expanded(), Some(true));
+
+        harness.edit_root_widget(|mut button| {
+            DisclosureButton::set_disclosed(&mut button, false);
+        });
+        let _ = harness.render();
+        let node = harness.access_node(id).unwrap();
+        assert_eq!(node.data().is_expanded(), Some(false));
     }
 }
