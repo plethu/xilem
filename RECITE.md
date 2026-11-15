@@ -50,3 +50,26 @@ the same 60 fps and edit-to-paint (plethu/recite#283). The choice is logged with
 `presenter="softbuffer"`, and `MASONRY_IMAGING_BACKEND=softbuffer|vello_cpu|vello` overrides it.
 Remove this when Masonry presents CPU frames without wgpu itself.
 
+
+Xilem's `text_input` and `prose` views take a `line_height` builder, as `label` does. The view sets
+it on the inner `TextArea` when it builds the widget, so the first frame already uses it, and
+reinserts it on rebuild when the value changes. The default is `theme::TEXT_LINE_HEIGHT`, the value
+`default_text_styles` already applied. Writer sets Literata at 1.45 on its multi-line manuscript
+inputs. Remove this when upstream views expose line height.
+
+`Portal` takes an optional accessible label, written to its `ScrollView` node, and a `focusable`
+flag with `set_focusable`; xilem's `portal` view exposes both. A non-focusable portal leaves the Tab
+order, while unhandled key events from focused descendants still bubble to its keyboard scrolling.
+Masonry caches `accepts_focus` when a widget is added, so the commit adds an
+`accepts_focus_changed` context method that re-reads it in the next focusable pass; the constrain
+setters call it as well. Portal viewport changes also request an accessibility update: since the
+`compose-local-accessibility` change, compose no longer rebuilds the portal's own node, so its
+`scroll_y` went stale (`portal_accessibility_node_exposes_scroll` failed). A portal that loses
+focusability while focused keeps focus until it moves. Remove this when upstream portals offer both.
+
+`Button` takes a `ButtonAccessState` (`with_access_state`, `set_access_state`) whose `expanded`,
+`selected` and `toggled` values are written to its AccessKit node; xilem's `button` view adds
+`expanded`, `selected` and `toggled` builders. Writer uses them instead of "▸/▾" in disclosure
+names, for selected picker and list rows, and for toggles such as "Pin reference". A `toggled` value
+makes AT-SPI expose a toggle button with a pressed state. `DisclosureButton` reports its disclosed
+state as `expanded` and advertises `Click`. Remove this when upstream buttons report these states.
