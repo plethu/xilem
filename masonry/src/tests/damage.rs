@@ -1,11 +1,16 @@
 // Copyright 2026 the Xilem Authors
 // SPDX-License-Identifier: Apache-2.0
 
-//! Damage regions reported by the paint pass.
+//! Damage regions reported by the paint pass, and damage-limited rendering.
 
 use std::sync::Arc;
 
-use crate::app::{Damage, RenderRoot, RenderRootOptions, WindowSizePolicy};
+use masonry_imaging::vello_cpu::{IncrementalRenderer, Renderer, pack_xrgb, render_rgba8};
+use masonry_imaging::{Layer, PreparedFrame};
+
+use crate::app::{
+    Damage, RenderRoot, RenderRootOptions, VisualLayerKind, VisualLayerPlan, WindowSizePolicy,
+};
 use crate::core::{
     ChildrenIds, CollectionWidget, NewWidget, Widget, WidgetPod, WidgetTag, WindowEvent,
 };
@@ -15,9 +20,9 @@ use crate::layout::{AsUnit, Length, SizeDef, UnitPoint};
 use crate::palette::css::{BLUE, GREEN, ORANGE, PURPLE, RED};
 use crate::peniko::Color;
 use crate::properties::Background;
-use crate::testing::{ModularWidget, ROBOTO, TestHarness};
+use crate::testing::{ModularWidget, ROBOTO, TestHarness, TestHarnessParams};
 use crate::theme::test_property_set;
-use crate::widgets::{Flex, IndexedStack, Portal, SizedBox, TextArea, ZStack};
+use crate::widgets::{Flex, IndexedStack, Label, Portal, SizedBox, TextArea, ZStack};
 
 const BOX: Length = Length::const_px(40.);
 
@@ -420,5 +425,185 @@ fn typing_and_caret_blink_damage_little() {
         if let Some(bounds) = blink.bounds(area_rect) {
             assert!(bounds.width() < 40., "caret blink damaged {bounds:?}");
         }
+    }
+}
+
+// --- MARK: PIXELS
+
+/// Renders every frame both in full and limited to its damage, and compares the pixels.
+struct PixelCheck {
+    incremental: IncrementalRenderer,
+    full: Renderer,
+    pixels: Vec<u8>,
+    partial_frames: usize,
+}
+
+impl PixelCheck {
+    fn new() -> Self {
+        Self {
+            incremental: IncrementalRenderer::new().unwrap(),
+            full: masonry_imaging::vello_cpu::new_headless_renderer().unwrap(),
+            pixels: Vec::new(),
+            partial_frames: 0,
+        }
+    }
+
+    #[track_caller]
+    fn frame<W: Widget>(&mut self, harness: &mut TestHarness<W>, step: &str) {
+        let (plan, _) = harness.redraw();
+        let size = harness.window_size();
+        let scale = harness.render_root().scale_factor();
+        self.compare(&plan, size, scale, step);
+    }
+
+    #[track_caller]
+    fn compare(&mut self, plan: &VisualLayerPlan, size: PhysicalSize<u32>, scale: f64, step: &str) {
+        let overlays: Vec<_> = plan
+            .overlay_layers()
+            .map(|layer| {
+                let VisualLayerKind::Scene(scene) = &layer.kind else {
+                    unreachable!()
+                };
+                Layer {
+                    scene,
+                    transform: layer.transform,
+                }
+            })
+            .collect();
+        let VisualLayerKind::Scene(root) = &plan.root_layer().unwrap().kind else {
+            unreachable!()
+        };
+        let frame = PreparedFrame::new(
+            size.width,
+            size.height,
+            scale,
+            Color::WHITE,
+            root,
+            &overlays,
+        );
+        let updated = self.incremental.render(frame, plan.damage.rects()).unwrap();
+        if updated.is_some() {
+            self.partial_frames += 1;
+        }
+        render_rgba8(&mut self.full, frame, &mut self.pixels).unwrap();
+        let expected = self.pixels.chunks_exact(4).map(pack_xrgb);
+        for (i, (actual, expected)) in self
+            .incremental
+            .framebuffer()
+            .iter()
+            .zip(expected)
+            .enumerate()
+        {
+            assert_eq!(
+                *actual,
+                expected,
+                "{step}: pixel ({}, {}) is stale, damage {:?}",
+                i as u32 % size.width,
+                i as u32 / size.width,
+                plan.damage
+            );
+        }
+    }
+}
+
+#[test]
+fn damage_limited_rendering_matches_full_rendering() {
+    for scale in [1.0, 1.5] {
+        let area_tag = WidgetTag::unique();
+        let label_tag = WidgetTag::unique();
+        let portal_tag = WidgetTag::unique();
+        let box_tag = WidgetTag::unique();
+        let stack_tag = WidgetTag::unique();
+        let mut column = Flex::column();
+        for i in 0..12 {
+            column = column.with_fixed(NewWidget::new(Label::new(format!("Row {i}"))));
+        }
+        let portal = NewWidget::new(Portal::new(NewWidget::new(column))).with_tag(portal_tag);
+        let stack = NewWidget::new(
+            IndexedStack::new()
+                .with(colored_box(RED))
+                .with(colored_box(BLUE)),
+        )
+        .with_tag(stack_tag);
+        let root = NewWidget::new(
+            Flex::column()
+                .with_fixed(NewWidget::new(Label::new("Status: ready")).with_tag(label_tag))
+                .with_fixed(NewWidget::new(
+                    Flex::row()
+                        .with_fixed(NewWidget::new(
+                            SizedBox::new(
+                                NewWidget::new(TextArea::new_editable("Hello world\nSecond line"))
+                                    .with_tag(area_tag),
+                            )
+                            .width(220.px())
+                            .height(90.px()),
+                        ))
+                        .with_fixed(NewWidget::new(
+                            SizedBox::new(portal).width(90.px()).height(90.px()),
+                        ))
+                        .with_fixed(stack),
+                ))
+                .with_fixed(colored_box(GREEN).with_tag(box_tag)),
+        );
+        let mut params = TestHarnessParams::default().with_size((400, 260));
+        params.scale_factor = scale;
+        let mut harness = TestHarness::create_with(test_property_set(), root, params);
+        let mut check = PixelCheck::new();
+        check.frame(&mut harness, "first frame");
+
+        let area_id = harness.get_widget(area_tag).id();
+        harness.focus_on(Some(area_id));
+        check.frame(&mut harness, "focus");
+        for (i, chars) in ["a", "b", "\n", "cd", " "].iter().enumerate() {
+            harness.keyboard_type_chars(chars);
+            check.frame(&mut harness, &format!("typing {i}"));
+        }
+        for i in 0..3 {
+            harness.animate_ms(600);
+            check.frame(&mut harness, &format!("caret blink {i}"));
+        }
+        harness.edit_widget(label_tag, |mut label| {
+            Label::set_text(&mut label, "Status: 5 words");
+        });
+        check.frame(&mut harness, "label");
+        for y in [30., 55., 0.] {
+            harness.edit_widget(portal_tag, |mut portal| {
+                Portal::set_viewport_pos(&mut portal, Point::new(0., y));
+            });
+            check.frame(&mut harness, &format!("scroll to {y}"));
+        }
+        let box_id = harness.get_widget(box_tag).id();
+        harness.mouse_move_to(box_id);
+        check.frame(&mut harness, "hover");
+        harness.edit_widget(box_tag, |mut widget| {
+            widget.insert_prop(Background::Color(PURPLE));
+        });
+        check.frame(&mut harness, "recolor");
+        harness.edit_widget(stack_tag, |mut stack| {
+            IndexedStack::set_active_child(&mut stack, 1);
+        });
+        check.frame(&mut harness, "stash");
+        let layer = colored_box(ORANGE);
+        let layer_id = layer.id();
+        harness
+            .render_root()
+            .add_layer(layer, Point::new(300., 150.));
+        check.frame(&mut harness, "add layer");
+        harness
+            .render_root()
+            .reposition_layer(layer_id, Point::new(320., 40.));
+        check.frame(&mut harness, "move layer");
+        harness.render_root().remove_layer(layer_id);
+        check.frame(&mut harness, "remove layer");
+        harness.edit_widget(box_tag, |mut widget| {
+            SizedBox::set_width(&mut widget, 80.px());
+        });
+        check.frame(&mut harness, "resize widget");
+
+        assert!(
+            check.partial_frames > 10,
+            "only {} frames rendered partially",
+            check.partial_frames
+        );
     }
 }
