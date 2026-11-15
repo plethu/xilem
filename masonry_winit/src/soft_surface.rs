@@ -10,18 +10,23 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use masonry_imaging::PreparedFrame;
-use masonry_imaging::vello_cpu::{self, Renderer};
+use masonry_core::kurbo::Rect;
+use masonry_imaging::vello_cpu::IncrementalRenderer;
+use masonry_imaging::{PixelRect, PreparedFrame};
 use winit::window::Window as WindowHandle;
 
 /// A window presented through `softbuffer` with Vello CPU frames.
+///
+/// Frames are rasterised into a persistent framebuffer, re-rasterising only the region Masonry
+/// reports as damaged, and presented with that damage so the window system only copies and
+/// recomposites what changed.
 pub(crate) struct SoftSurface {
     // The surface borrows the platform display from the context, so both are kept together.
     _context: softbuffer::Context<Arc<WindowHandle>>,
     surface: softbuffer::Surface<Arc<WindowHandle>, Arc<WindowHandle>>,
-    renderer: Renderer,
-    /// Reused frame pixels, tightly packed RGBA8.
-    pixels: Vec<u8>,
+    renderer: IncrementalRenderer,
+    /// Size the surface was last resized to.
+    size: Option<(NonZeroU32, NonZeroU32)>,
 }
 
 impl SoftSurface {
@@ -30,44 +35,99 @@ impl SoftSurface {
         let context = softbuffer::Context::new(handle.clone())?;
         let surface = softbuffer::Surface::new(&context, handle)?;
         let renderer =
-            vello_cpu::new_headless_renderer().expect("creating a Vello CPU renderer cannot fail");
+            IncrementalRenderer::new().expect("creating a Vello CPU renderer cannot fail");
         Ok(Self {
             _context: context,
             surface,
             renderer,
-            pixels: Vec::new(),
+            size: None,
         })
     }
 
     /// Rasterise and present one frame.
-    pub(crate) fn present(&mut self, window: &WindowHandle, frame: PreparedFrame<'_>) {
+    ///
+    /// `damage` is the window region Masonry reports as changed since the previous frame, in
+    /// logical pixels, or `None` to repaint everything. `expose` presents the whole frame even if
+    /// only part of it was re-rasterised, for redraws the window system requested because the
+    /// window's contents were lost.
+    pub(crate) fn present(
+        &mut self,
+        window: &WindowHandle,
+        frame: PreparedFrame<'_>,
+        damage: Option<&[Rect]>,
+        expose: bool,
+    ) {
         let (Some(width), Some(height)) =
             (NonZeroU32::new(frame.width), NonZeroU32::new(frame.height))
         else {
             return;
         };
-        if let Err(err) = vello_cpu::render_rgba8(&mut self.renderer, frame, &mut self.pixels) {
-            tracing::error!("Couldn't render Masonry content with Vello CPU: {err}");
-            return;
-        }
-        if let Err(err) = self.surface.resize(width, height) {
-            tracing::error!("Couldn't resize the softbuffer surface: {err}");
-            return;
-        }
-        let mut buffer = match self.surface.buffer_mut() {
-            Ok(buffer) => buffer,
+        let updated = match self.renderer.render(frame, damage) {
+            Ok(updated) => updated,
             Err(err) => {
-                tracing::error!("Couldn't acquire a softbuffer frame: {err}");
+                tracing::error!("Couldn't render Masonry content with Vello CPU: {err}");
+                self.renderer.invalidate();
                 return;
             }
         };
-        // softbuffer pixels are 0x00RRGGBB; window frames are opaque.
-        for (pixel, rgba) in buffer.iter_mut().zip(self.pixels.chunks_exact(4)) {
-            *pixel = (u32::from(rgba[0]) << 16) | (u32::from(rgba[1]) << 8) | u32::from(rgba[2]);
+        if let Err(err) = self.present_framebuffer(window, (width, height), updated, expose) {
+            tracing::error!("Couldn't present the softbuffer frame: {err}");
+            // The window may now show something other than the framebuffer.
+            self.renderer.invalidate();
+        }
+    }
+
+    fn present_framebuffer(
+        &mut self,
+        window: &WindowHandle,
+        (width, height): (NonZeroU32, NonZeroU32),
+        updated: Option<Vec<PixelRect>>,
+        expose: bool,
+    ) -> Result<(), softbuffer::SoftBufferError> {
+        if self.size != Some((width, height)) {
+            self.surface.resize(width, height)?;
+            self.size = Some((width, height));
+        }
+        let updated = updated.filter(|_| !expose);
+        if updated.as_ref().is_some_and(Vec::is_empty) {
+            // Nothing changed and the window still shows the previous frame.
+            return Ok(());
+        }
+        let mut buffer = self.surface.buffer_mut()?;
+        let framebuffer = self.renderer.framebuffer();
+        // The buffer holds the previously presented frame only when its age is 1; otherwise it
+        // is new or older, so the whole framebuffer is copied. Presentation damage is relative to
+        // the previously presented frame either way.
+        match &updated {
+            Some(rects) if buffer.age() == 1 => {
+                let stride = width.get() as usize;
+                for rect in rects {
+                    for row in rect.y..rect.bottom() {
+                        let start = row as usize * stride + rect.x as usize;
+                        let end = start + rect.width as usize;
+                        buffer[start..end].copy_from_slice(&framebuffer[start..end]);
+                    }
+                }
+            }
+            _ => buffer.copy_from_slice(framebuffer),
         }
         window.pre_present_notify();
-        if let Err(err) = buffer.present() {
-            tracing::error!("Couldn't present the softbuffer frame: {err}");
+        match updated {
+            Some(rects) => {
+                let damage: Vec<softbuffer::Rect> = rects
+                    .iter()
+                    .filter_map(|rect| {
+                        Some(softbuffer::Rect {
+                            x: rect.x,
+                            y: rect.y,
+                            width: NonZeroU32::new(rect.width)?,
+                            height: NonZeroU32::new(rect.height)?,
+                        })
+                    })
+                    .collect();
+                buffer.present_with_damage(&damage)
+            }
+            None => buffer.present(),
         }
     }
 }

@@ -135,6 +135,8 @@ pub struct Window {
     event_reducer: WindowEventReducer,
     pub(crate) render_root: RenderRoot,
     pub(crate) base_color: Color,
+    /// Whether Masonry asked for the pending redraw; other redraws come from the window system.
+    redraw_requested: bool,
 }
 
 impl Window {
@@ -169,6 +171,7 @@ impl Window {
                 },
             ),
             base_color,
+            redraw_requested: false,
         }
     }
 
@@ -627,6 +630,11 @@ impl MasonryState {
         let _span = info_span!("redraw");
 
         let window = self.windows.get_mut(&handle_id).unwrap();
+        // A redraw Masonry did not request comes from the window system, typically because
+        // the window's contents were exposed and must be presented in full.
+        #[cfg(feature = "softbuffer_fallback")]
+        let expose = !window.redraw_requested;
+        window.redraw_requested = false;
         let size = window.render_root.size();
         if size.width == 0 || size.height == 0 {
             // Surface can't have a dimension of zero, remove the stale surface to save memory.
@@ -698,14 +706,17 @@ impl MasonryState {
             &overlays,
         );
         if gpu {
+            // The wgpu presenters render every frame in full and ignore the damage.
             let surface = self.surfaces.get_mut(&handle_id).unwrap();
             Self::render(surface, window, frame, &self.render_cx, &mut self.renderer);
         } else {
             #[cfg(feature = "softbuffer_fallback")]
-            self.soft_surfaces
-                .get_mut(&handle_id)
-                .unwrap()
-                .present(&window.handle, frame);
+            self.soft_surfaces.get_mut(&handle_id).unwrap().present(
+                &window.handle,
+                frame,
+                visual_layers.damage.rects(),
+                expose,
+            );
         }
         #[cfg(feature = "tracy")]
         drop(self.frame.take());
@@ -1249,7 +1260,8 @@ impl MasonryState {
         // If we're processing a lot of actions, we may have a lot of pending redraws.
         // We batch them up to avoid redundant requests.
         for handle_id in need_redraw {
-            let window = self.windows.get(&handle_id).unwrap();
+            let window = self.windows.get_mut(&handle_id).unwrap();
+            window.redraw_requested = true;
             window.handle.request_redraw();
         }
     }
