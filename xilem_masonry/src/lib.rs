@@ -45,6 +45,9 @@ mod pod;
 mod view_ctx;
 mod widget_view;
 
+#[cfg(test)]
+mod test_util;
+
 pub use any_view::AnyWidgetView;
 pub use masonry_root::{InitialRootWidget, MasonryRoot};
 pub use pod::Pod;

@@ -41,6 +41,8 @@ pub const FOCUS_COLOR: Color = Color::from_rgb8(0xff, 0xff, 0xff);
 
 // TODO: The following constants are not being used in properties
 pub const TEXT_SIZE_NORMAL: f32 = 15.0;
+/// The line height [`default_text_styles`] gives text areas and labels.
+pub const TEXT_LINE_HEIGHT: LineHeight = LineHeight::FontSizeRelative(1.2);
 pub const BASIC_WIDGET_HEIGHT: Length = Length::const_px(18.0);
 pub const BORDERED_WIDGET_HEIGHT: f64 = 24.0;
 pub const SCROLLBAR_COLOR: Color = Color::from_rgb8(0xff, 0xff, 0xff);
@@ -415,7 +417,7 @@ pub fn default_property_set() -> DefaultProperties {
 
 /// Applies the default text styles for Masonry into `styles`.
 pub fn default_text_styles(styles: &mut StyleSet) {
-    styles.insert(StyleProperty::LineHeight(LineHeight::FontSizeRelative(1.2)));
+    styles.insert(StyleProperty::LineHeight(TEXT_LINE_HEIGHT));
     styles.insert(GenericFamily::SystemUi.into());
 }
 
