@@ -1624,6 +1624,7 @@ impl_context_method!(
                 }
 
                 global_state.scene_cache.remove(&state.id);
+                global_state.damage.removed(state.paint_record.as_ref());
 
                 if let Some(layers) = global_state.attached_layers.remove(&state.id) {
                     for (_, layer_id) in layers {

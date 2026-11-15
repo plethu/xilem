@@ -6,6 +6,7 @@ use std::any::TypeId;
 use kurbo::{Affine, Insets, Point, Rect, Size, Vec2};
 use tracing::Span;
 
+use crate::app::PaintRecord;
 use crate::core::{
     ClassSetDiff, PaintLayerMode, PropertyCache, PropertyStackId, WidgetId, WidgetOptions,
 };
@@ -203,6 +204,8 @@ pub(crate) struct WidgetState {
     pub(crate) request_post_paint: bool,
     /// A painting method must be called on this widget or a descendant
     pub(crate) needs_paint: bool,
+    /// Where this widget painted in the previous frame, for damage tracking.
+    pub(crate) paint_record: Option<PaintRecord>,
     /// How this widget subtree should be represented in the current paint pass.
     pub(crate) paint_layer_mode: PaintLayerMode,
 
@@ -298,6 +301,7 @@ impl WidgetState {
             layout_border_box_size: Size::ZERO,
             border_box_insets: Insets::ZERO,
             paint_box_insets: Insets::ZERO,
+            paint_record: None,
             bounding_box: Rect::ZERO,
             first_baseline: f64::NAN,
             last_baseline: f64::NAN,

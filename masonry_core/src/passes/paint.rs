@@ -3,12 +3,15 @@
 
 use std::collections::HashMap;
 
-use kurbo::{Affine, Line, Stroke};
+use kurbo::{Affine, Line, Rect, Stroke};
 use peniko::{Color, Fill};
 use tracing::{info_span, trace};
 use tree_arena::ArenaMut;
 
-use crate::app::{RenderRoot, RenderRootState, VisualLayer, VisualLayerKind, VisualLayerPlan};
+use crate::app::{
+    DamageTracker, PaintGeometry, RenderRoot, RenderRootState, SLOTS, SlotChange, VisualLayer,
+    VisualLayerKind, VisualLayerPlan, clip_to, scene_bounds,
+};
 use crate::core::{
     DefaultProperties, PaintCtx, PaintLayerMode, PropertiesRef, PropertyArena, WidgetArenaNode,
     WidgetId,
@@ -53,7 +56,7 @@ impl LayerCollector {
         });
     }
 
-    fn push_external_layer(&mut self, widget_id: WidgetId, bounds: kurbo::Rect) {
+    fn push_external_layer(&mut self, widget_id: WidgetId, bounds: Rect) {
         self.layers.push(VisualLayer {
             kind: VisualLayerKind::External { bounds },
             transform: self.transform,
@@ -67,16 +70,49 @@ impl LayerCollector {
     }
 }
 
+/// Per-layer state shared by every widget painted into it.
+struct LayerContext<'a> {
+    default_properties: &'a DefaultProperties,
+    property_arena: &'a PropertyArena,
+    window_to_layer_transform: Affine,
+    /// Transform the host applies to the layer's scene; maps layer space back to window space.
+    layer_to_window_transform: Affine,
+}
+
+/// Repaints one scene slot, diffing its old and new contents.
+fn repaint_slot(
+    damage: &mut DamageTracker,
+    scene: &mut Scene,
+    paint: impl FnOnce(&mut Painter<'_>),
+) -> SlotChange {
+    // The previous contents move to the scratch scene for diffing; the slot keeps the scratch
+    // scene's allocations.
+    std::mem::swap(scene, &mut damage.scratch);
+    scene.clear();
+    {
+        let sink_dyn: &mut dyn PaintSink = scene;
+        let mut painter = Painter::new(sink_dyn);
+        paint(&mut painter);
+    }
+    damage.diff_slot(scene)
+}
+
 // --- MARK: PAINT WIDGET
+/// Paints a widget and its descendants, returning the window-space rectangle they cover.
+///
+/// `clip` is the window-space bounds of ancestor clips.
 fn paint_widget(
     global_state: &mut RenderRootState,
-    default_properties: &DefaultProperties,
-    property_arena: &PropertyArena,
+    layer: &LayerContext<'_>,
     layer_collector: &mut LayerCollector,
     scene_cache: &mut HashMap<WidgetId, (Scene, Scene, Scene)>,
-    window_to_layer_transform: &Affine,
+    damage: &mut DamageTracker,
+    clip: Rect,
     node: ArenaMut<'_, WidgetArenaNode>,
-) {
+) -> Option<Rect> {
+    let default_properties = layer.default_properties;
+    let property_arena = layer.property_arena;
+    let window_to_layer_transform = &layer.window_to_layer_transform;
     let mut children = node.children;
     let widget = &mut *node.item.widget;
     let state = &mut node.item.state;
@@ -92,9 +128,7 @@ fn paint_widget(
     // (See WidgetState doc.)
     let is_stashed = state.is_stashed;
 
-    // TODO - Handle damage regions
-    // https://github.com/linebender/xilem/issues/789
-
+    let mut changes: [Option<SlotChange>; SLOTS] = [None; SLOTS];
     state.paint_layer_mode = PaintLayerMode::Inline;
     if (state.request_pre_paint || state.request_paint || state.request_post_paint) && !is_stashed {
         if trace {
@@ -118,22 +152,19 @@ fn paint_widget(
         // https://github.com/linebender/xilem/issues/524
         let (pre_scene, scene, post_scene) = scene_cache.entry(id).or_default();
         if ctx.widget_state.request_pre_paint {
-            pre_scene.clear();
-            let sink_dyn: &mut dyn PaintSink = pre_scene;
-            let mut painter = Painter::new(sink_dyn);
-            widget.pre_paint(&mut ctx, &props, &mut painter);
+            changes[0] = Some(repaint_slot(damage, pre_scene, |painter| {
+                widget.pre_paint(&mut ctx, &props, painter);
+            }));
         }
         if ctx.widget_state.request_paint {
-            scene.clear();
-            let sink_dyn: &mut dyn PaintSink = scene;
-            let mut painter = Painter::new(sink_dyn);
-            widget.paint(&mut ctx, &props, &mut painter);
+            changes[1] = Some(repaint_slot(damage, scene, |painter| {
+                widget.paint(&mut ctx, &props, painter);
+            }));
         }
         if ctx.widget_state.request_post_paint {
-            post_scene.clear();
-            let sink_dyn: &mut dyn PaintSink = post_scene;
-            let mut painter = Painter::new(sink_dyn);
-            widget.post_paint(&mut ctx, &props, &mut painter);
+            changes[2] = Some(repaint_slot(damage, post_scene, |painter| {
+                widget.post_paint(&mut ctx, &props, painter);
+            }));
         }
     }
 
@@ -167,12 +198,36 @@ fn paint_widget(
     let has_clip = state.clip_path.is_some();
     let paint_as_external = paint_layer_mode == PaintLayerMode::External;
 
+    // Damage is tracked in window space, through the same transforms the host applies.
+    let border_box_to_window_transform =
+        layer.layer_to_window_transform * border_box_to_layer_transform;
+    let inner_clip = match state.clip_path {
+        Some(clip_path) => clip_to(
+            border_box_to_window_transform.transform_rect_bbox(clip_path),
+            clip,
+        )
+        .unwrap_or(Rect::ZERO),
+        None => clip,
+    };
+    let geometry = PaintGeometry {
+        transform: border_box_to_window_transform.pre_translate(state.border_box_translation()),
+        outer_clip: clip,
+        inner_clip,
+        painted: !is_stashed && !paint_as_external,
+        external: (paint_as_external && !is_stashed)
+            .then(|| border_box_to_window_transform.transform_rect_bbox(state.border_box())),
+    };
+    let own_rect = damage.update_widget(&mut state.paint_record, &geometry, changes, |slot| {
+        let (pre, scene, post) = scene_cache.get(&id)?;
+        scene_bounds([pre, scene, post][slot])
+    });
+
     if !is_stashed && !paint_as_external {
         let Some((pre_scene, scene, _)) = &mut scene_cache.get(&id) else {
             debug_panic!(
                 "Error in paint pass: scene should have been cached earlier in this function."
             );
-            return;
+            return None;
         };
 
         layer_collector
@@ -193,24 +248,39 @@ fn paint_widget(
             .append_transformed(scene, content_box_to_layer_transform);
     }
 
+    // The widget's clip only applies to children when its scenes are painted inline.
+    let child_clip = if geometry.painted { inner_clip } else { clip };
     let parent_state = &mut *state;
+    let mut subtree = own_rect;
+    let mut children_hash = 0_u64;
     recurse_on_children(id, widget, children, |mut node| {
         // TODO: We could skip painting children outside the parent clip path.
         // There's a few things to consider if we do:
         // - Some widgets can paint outside of their border-box.
         // - Once we implement compositor layers, we may want to paint outside of the clip path anyway in anticipation of user scrolling.
         // - We still want to reset needs_paint and request_paint flags.
-        paint_widget(
+        children_hash = (children_hash.rotate_left(5) ^ node.item.state.id.to_raw())
+            .wrapping_mul(0x517c_c1b7_2722_0a95);
+        let child_rect = paint_widget(
             global_state,
-            default_properties,
-            property_arena,
+            layer,
             layer_collector,
             scene_cache,
-            window_to_layer_transform,
+            damage,
+            child_clip,
             node.reborrow_mut(),
         );
+        if let Some(child_rect) = child_rect {
+            subtree = Some(subtree.map_or(child_rect, |rect| rect.union(child_rect)));
+        }
         parent_state.merge_up(&mut node.item.state);
     });
+    damage.update_subtree(
+        &mut parent_state.paint_record,
+        subtree,
+        children_hash,
+        || widget.children_ids().into_iter().collect(),
+    );
 
     if !is_stashed && !paint_as_external {
         if global_state.debug_paint {
@@ -248,7 +318,7 @@ fn paint_widget(
             debug_panic!(
                 "Error in paint pass: scene should have been cached earlier in this function."
             );
-            return;
+            return None;
         };
 
         layer_collector
@@ -277,6 +347,7 @@ fn paint_widget(
     }
 
     layer_collector.current_owner_id = previous_owner_id;
+    subtree
 }
 
 // --- MARK: ROOT
@@ -288,8 +359,22 @@ pub(crate) fn run_paint_pass(root: &mut RenderRoot) -> VisualLayerPlan {
     // This should be removed once remove_child is exclusive to MutateCtx.
     let mut scene_cache = std::mem::take(&mut root.global_state.scene_cache);
 
+    let mut damage = std::mem::take(&mut root.global_state.damage);
+
     let root_id = root.root_id();
     let layer_root_ids = root.layer_root_ids();
+
+    // Debug paint and the inspector overlay draw outside widget scenes.
+    let overlays_active =
+        root.global_state.debug_paint || root.global_state.inspector_state.hovered_widget.is_some();
+    let window = Rect::from_origin_size(kurbo::Point::ORIGIN, root.get_kurbo_size());
+    damage.begin_frame(
+        root.global_state.size,
+        root.global_state.scale_factor,
+        window,
+        &layer_root_ids,
+        overlays_active,
+    );
 
     let mut layers = Vec::new();
 
@@ -307,6 +392,8 @@ pub(crate) fn run_paint_pass(root: &mut RenderRoot) -> VisualLayerPlan {
             root,
             &mut collector,
             &mut scene_cache,
+            &mut damage,
+            window,
             root_id,
             layer_widget_id,
         );
@@ -314,8 +401,13 @@ pub(crate) fn run_paint_pass(root: &mut RenderRoot) -> VisualLayerPlan {
     }
 
     root.global_state.scene_cache = scene_cache;
+    let damage_region = damage.finish_frame();
+    root.global_state.damage = damage;
 
-    VisualLayerPlan { layers }
+    VisualLayerPlan {
+        layers,
+        damage: damage_region,
+    }
 }
 
 /// Paint a single layer's widget subtree into `target_scene`.
@@ -326,6 +418,8 @@ fn paint_layer(
     root: &mut RenderRoot,
     layer_collector: &mut LayerCollector,
     scene_cache: &mut HashMap<WidgetId, (Scene, Scene, Scene)>,
+    damage: &mut DamageTracker,
+    window: Rect,
     root_id: WidgetId,
     layer_widget_id: WidgetId,
 ) {
@@ -350,14 +444,20 @@ fn paint_layer(
     };
 
     let window_to_layer_transform = layer_node.item.state.window_transform.inverse();
+    let layer = LayerContext {
+        default_properties: &root.property_arena.default_properties,
+        property_arena: &root.property_arena,
+        window_to_layer_transform,
+        layer_to_window_transform: layer_collector.transform,
+    };
 
     paint_widget(
         &mut root.global_state,
-        &root.property_arena.default_properties,
-        &root.property_arena,
+        &layer,
         layer_collector,
         scene_cache,
-        &window_to_layer_transform,
+        damage,
+        window,
         layer_node,
     );
 }

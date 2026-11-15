@@ -11,6 +11,7 @@ mod accessibility;
 mod action;
 mod anim;
 mod compose;
+mod damage;
 mod event;
 mod layout;
 mod mutate;

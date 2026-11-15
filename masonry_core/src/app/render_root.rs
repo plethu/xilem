@@ -15,8 +15,8 @@ use parley::{FontContext, LayoutContext};
 use tracing::{debug, info_span, warn};
 use tree_arena::{ArenaMut, TreeArena};
 
-use crate::app::VisualLayerPlan;
 use crate::app::layer_stack::LayerStack;
+use crate::app::{DamageTracker, VisualLayerPlan};
 use crate::core::{
     AccessCtx, AccessEvent, BrushIndex, CursorIcon, DefaultProperties, ErasedAction, FromDynWidget,
     Handled, Ime, LayerType, NewWidget, PointerEvent, PropertiesRef, PropertyArena, PropertyStack,
@@ -148,6 +148,9 @@ pub(crate) struct RenderRootState {
 
     /// Scene cache for the widget tree.
     pub(crate) scene_cache: HashMap<WidgetId, (Scene, Scene, Scene)>,
+
+    /// Where each widget painted in the previous frame, used to compute damage.
+    pub(crate) damage: DamageTracker,
 
     pub(crate) widget_tags: HashMap<WidgetTagInner, WidgetId>,
 
@@ -366,6 +369,7 @@ impl RenderRoot {
                 is_ime_active: false,
                 last_sent_ime_area: INVALID_IME_AREA,
                 scene_cache: HashMap::new(),
+                damage: DamageTracker::default(),
                 widget_tags: HashMap::new(),
                 attached_layers: HashMap::new(),
                 needs_pointer_pass: false,
@@ -424,6 +428,9 @@ impl RenderRoot {
     /// resolved by each widget.
     pub fn set_default_properties(&mut self, default_properties: Arc<DefaultProperties>) {
         self.property_arena.default_properties = default_properties;
+        // Widgets repaint with new properties anyway; report full damage in case a default is
+        // read outside paint.
+        self.global_state.damage.force_full = true;
 
         // Mark the whole tree for the update-properties pass: `needs_update_props`
         // so the pass descends to every node, `request_update_props` to enter the
@@ -614,7 +621,6 @@ impl RenderRoot {
 
         let access_tree_active = self.global_state.access_tree_active;
 
-        // TODO - Handle invalidation regions
         let visual_layers = run_paint_pass(self);
         let tree_update = access_tree_active
             .then(|| run_accessibility_pass(self, self.global_state.scale_factor));
@@ -943,6 +949,7 @@ impl RenderRoot {
 
         let root_node = self.widget_arena.get_node_mut(self.root_id());
         request_render_all_in(root_node);
+        self.global_state.damage.force_full = true;
         self.global_state
             .emit_signal(RenderRootSignal::RequestRedraw);
     }

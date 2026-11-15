@@ -3,6 +3,7 @@
 
 use kurbo::{Affine, Rect};
 
+use crate::app::Damage;
 use crate::core::WidgetId;
 use crate::imaging::PaintSink;
 use crate::imaging::record::{Scene, replay_transformed};
@@ -15,6 +16,8 @@ use crate::imaging::record::{Scene, replay_transformed};
 pub struct VisualLayerPlan {
     /// Layers in painter order, back to front.
     pub layers: Vec<VisualLayer>,
+    /// The window region that changed since the previous plan was produced.
+    pub damage: Damage,
 }
 
 impl VisualLayerPlan {
@@ -92,6 +95,7 @@ pub enum VisualLayerKind {
 #[cfg(test)]
 mod tests {
     use super::{VisualLayer, VisualLayerKind, VisualLayerPlan};
+    use crate::app::Damage;
     use crate::core::WidgetId;
     use crate::imaging::Painter;
     use crate::imaging::record::{Scene, replay_transformed};
@@ -130,6 +134,7 @@ mod tests {
                     widget_id: WidgetId::next(),
                 },
             ],
+            damage: Damage::Full,
         };
 
         let mut actual = Scene::new();
@@ -172,6 +177,7 @@ mod tests {
                     widget_id: WidgetId::next(),
                 },
             ],
+            damage: Damage::Full,
         };
 
         assert!(matches!(
