@@ -8,7 +8,7 @@ use understory_virtual_list::{ScrollAlign, SparsePrefixSumExtentModel, VirtualLi
 
 use crate::core::keyboard::{Key, KeyState, NamedKey};
 use crate::core::{
-    AccessCtx, AccessEvent, ChildrenIds, ComposeCtx, EventCtx, KeyboardEvent, LayoutCtx,
+    AccessCtx, AccessEvent, ArcStr, ChildrenIds, ComposeCtx, EventCtx, KeyboardEvent, LayoutCtx,
     MeasureCtx, NewWidget, PaintCtx, PointerEvent, PointerScrollEvent, PropertiesMut,
     PropertiesRef, RegisterCtx, TextEvent, Update, UpdateCtx, Widget, WidgetMut, WidgetPod,
 };
@@ -215,6 +215,9 @@ pub struct VirtualScroll {
     direction: ScrollDirection,
 
     scrolling: bool,
+
+    accessible_label: Option<ArcStr>,
+    focusable: bool,
 }
 
 impl std::fmt::Debug for VirtualScroll {
@@ -232,6 +235,8 @@ impl std::fmt::Debug for VirtualScroll {
             .field("end_at", &self.end_at)
             .field("direction", &self.direction)
             .field("scrolling", &self.scrolling)
+            .field("accessible_label", &self.accessible_label)
+            .field("focusable", &self.focusable)
             .finish()
     }
 }
@@ -269,6 +274,8 @@ impl VirtualScroll {
             end_at: 1.,
             direction: ScrollDirection::TopToBottom,
             scrolling: false,
+            accessible_label: None,
+            focusable: true,
         }
     }
 
@@ -298,6 +305,24 @@ impl VirtualScroll {
     /// Adjusts pixel snapping for animations.
     pub fn with_scrolling(mut self, scrolling: bool) -> Self {
         self.scrolling = scrolling;
+        self
+    }
+
+    /// Sets the name assistive technology announces for this scroll view.
+    ///
+    /// The default is no name.
+    pub fn with_accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Sets whether the list itself can take keyboard focus.
+    ///
+    /// The default is `true`. When `false`, Tab skips the list, and its keyboard scrolling only
+    /// runs for key events that bubble up from a focused descendant and that the descendant
+    /// left unhandled.
+    pub fn with_focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
         self
     }
 }
@@ -522,6 +547,25 @@ impl VirtualScroll {
         this.ctx.request_render();
     }
 
+    /// Sets the name assistive technology announces for this scroll view.
+    ///
+    /// See [`VirtualScroll::with_accessible_label`] for more details.
+    pub fn set_accessible_label(this: &mut WidgetMut<'_, Self>, label: Option<impl Into<ArcStr>>) {
+        this.widget.accessible_label = label.map(Into::into);
+        this.ctx.request_accessibility_update();
+    }
+
+    /// Sets whether the list itself can take keyboard focus.
+    ///
+    /// See [`VirtualScroll::with_focusable`] for more details.
+    /// If the list holds focus when this turns it off, it keeps focus until focus moves.
+    pub fn set_focusable(this: &mut WidgetMut<'_, Self>, focusable: bool) {
+        if this.widget.focusable != focusable {
+            this.widget.focusable = focusable;
+            this.ctx.accepts_focus_changed();
+        }
+    }
+
     /// Forcefully aligns the top of the item at `idx` with the top of the
     /// virtual scroll area.
     ///
@@ -572,6 +616,7 @@ impl Widget for VirtualScroll {
                 ctx.request_layout();
             }
             ctx.request_compose();
+            ctx.request_accessibility_update();
         }
     }
 
@@ -623,6 +668,8 @@ impl Widget for VirtualScroll {
                 ctx.request_layout();
             }
             ctx.request_compose();
+            // The scroll position is part of this widget's accessibility node.
+            ctx.request_accessibility_update();
             ctx.set_handled();
         }
     }
@@ -652,6 +699,7 @@ impl Widget for VirtualScroll {
             ctx.request_layout();
         }
         ctx.request_compose();
+        ctx.request_accessibility_update();
         ctx.set_handled();
     }
 
@@ -672,6 +720,7 @@ impl Widget for VirtualScroll {
                 ctx.request_layout();
             }
             ctx.request_compose();
+            ctx.request_accessibility_update();
         }
     }
 
@@ -841,6 +890,9 @@ impl Widget for VirtualScroll {
         node: &mut accesskit::Node,
     ) {
         node.set_clips_children();
+        if let Some(label) = &self.accessible_label {
+            node.set_label(&**label);
+        }
         node.set_orientation(match self.direction.axis() {
             Axis::Horizontal => accesskit::Orientation::Horizontal,
             Axis::Vertical => accesskit::Orientation::Vertical,
@@ -900,8 +952,9 @@ impl Widget for VirtualScroll {
         // - We want this widget to accept e.g. pagedown events, even when there is no focusable child
         // - We want the keyboard focus to be able to "escape" the virtual list, rather than be trapped.
         // See also the caveat in the main docs for this widget.
-        // This is true for now to allow PageDown events to be handled.
-        true
+        // It defaults to true to allow PageDown events to be handled; a list whose descendants
+        // take focus can opt out, since their unhandled key events still bubble here.
+        self.focusable
     }
 
     // TODO: Optimise using binary search?
@@ -962,6 +1015,69 @@ mod tests {
         harness.mouse_wheel(Vec2 { x: 0., y: 25. });
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_render_snapshot!(harness, "virtual_scroll_scrolled");
+    }
+
+    #[test]
+    fn unfocusable_list_is_named_and_scrolls_from_focused_descendant() {
+        use crate::core::{TextEvent, WidgetTag};
+        use crate::widgets::Button;
+
+        let scroll_tag = WidgetTag::named("results");
+        let widget = NewWidget::new(
+            VirtualScroll::new(0, 50)
+                .with_accessible_label("Results")
+                .with_focusable(false),
+        )
+        .with_tag(scroll_tag);
+
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (100, 200));
+        let virtual_scroll_id = harness.root_id();
+        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
+            VirtualScroll::will_handle_action(&mut scroll, &action);
+            for idx in action.old_active.clone() {
+                if !action.target.contains(&idx) {
+                    VirtualScroll::remove_child(&mut scroll, idx);
+                }
+            }
+            for idx in action.target {
+                if !action.old_active.contains(&idx) {
+                    VirtualScroll::add_child(
+                        &mut scroll,
+                        idx,
+                        NewWidget::new(Button::with_text(format!("{idx}"))).erased(),
+                    );
+                }
+            }
+        }
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        let _ = harness.render();
+
+        let node = harness.access_node(virtual_scroll_id).unwrap();
+        assert_eq!(node.data().label(), Some("Results"));
+        assert!(!node.data().supports_action(accesskit::Action::Focus));
+        assert!(!node.data().supports_action(accesskit::Action::ScrollUp));
+
+        // Tab skips the list and lands on its first item.
+        harness.press_tab_key(false);
+        let focused = harness.focused_widget_id();
+        assert!(focused.is_some());
+        assert_ne!(focused, Some(virtual_scroll_id));
+
+        // Keys the item leaves unhandled bubble up and scroll the list.
+        harness.process_text_event(TextEvent::key_down(Key::Named(NamedKey::PageDown)));
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        let _ = harness.render();
+        let node = harness.access_node(virtual_scroll_id).unwrap();
+        assert!(node.data().supports_action(accesskit::Action::ScrollUp));
+
+        harness.edit_widget(scroll_tag, |mut scroll| {
+            VirtualScroll::set_focusable(&mut scroll, true);
+            VirtualScroll::set_accessible_label(&mut scroll, None::<ArcStr>);
+        });
+        let _ = harness.render();
+        let node = harness.access_node(virtual_scroll_id).unwrap();
+        assert!(node.data().supports_action(accesskit::Action::Focus));
+        assert_eq!(node.data().label(), None);
     }
 
     #[test]

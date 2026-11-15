@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::ops::Range;
 
-use masonry::core::{Widget, WidgetPod};
+use masonry::core::{ArcStr, Widget, WidgetPod};
 use masonry::util::debug_panic;
 use masonry::widgets;
 
@@ -26,6 +26,8 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     end_at: f64,
     direction: ScrollDirection,
     scrolling: bool,
+    accessible_label: Option<ArcStr>,
+    focusable: bool,
     on_scroll: G,
 }
 
@@ -80,6 +82,8 @@ where
         end_at: 1.,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
+        accessible_label: None,
+        focusable: true,
         on_scroll: private::do_nothing::<State, Action>,
     }
 }
@@ -115,6 +119,8 @@ where
         end_at: 1.,
         direction: ScrollDirection::TopToBottom,
         scrolling: false,
+        accessible_label: None,
+        focusable: true,
         on_scroll: private::do_nothing::<State, Action>,
     }
 }
@@ -150,6 +156,20 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
         self
     }
 
+    /// Sets the name assistive technology announces for this scroll view.
+    pub fn accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Sets whether the list itself can take keyboard focus.
+    ///
+    /// See [`widgets::VirtualScroll::with_focusable`] for more details.
+    pub fn focusable(mut self, focusable: bool) -> Self {
+        self.focusable = focusable;
+        self
+    }
+
     /// Sets the scroll handler.
     ///
     /// A scroll handler enables saving the current index of the scroll view, among others.
@@ -163,6 +183,8 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             end_at: self.end_at,
             direction: self.direction,
             scrolling: self.scrolling,
+            accessible_label: self.accessible_label,
+            focusable: self.focusable,
             on_scroll,
         }
     }
@@ -229,12 +251,15 @@ where
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         // TODO: How does the anchor interact with Xilem?
         // Setting that seems like an imperative action?
-        let pod = Pod::new(
-            widgets::VirtualScroll::new(self.anchor_index.unwrap_or(0), self.len)
-                .with_start_end(self.start_at, self.end_at)
-                .with_direction(self.direction)
-                .with_scrolling(self.scrolling),
-        );
+        let mut widget = widgets::VirtualScroll::new(self.anchor_index.unwrap_or(0), self.len)
+            .with_start_end(self.start_at, self.end_at)
+            .with_direction(self.direction)
+            .with_scrolling(self.scrolling)
+            .with_focusable(self.focusable);
+        if let Some(label) = &self.accessible_label {
+            widget = widget.with_accessible_label(label.clone());
+        }
+        let pod = Pod::new(widget);
         ctx.record_action_source(pod.new_widget.id());
         (
             pod,
@@ -282,6 +307,15 @@ where
         let scrolling_changed = self.scrolling != prev.scrolling;
         if scrolling_changed {
             widgets::VirtualScroll::set_scrolling(&mut element, self.scrolling);
+        }
+        if self.accessible_label != prev.accessible_label {
+            widgets::VirtualScroll::set_accessible_label(
+                &mut element,
+                self.accessible_label.clone(),
+            );
+        }
+        if self.focusable != prev.focusable {
+            widgets::VirtualScroll::set_focusable(&mut element, self.focusable);
         }
 
         // TODO: This code should be moved into `Self::message` once it becomes possible to

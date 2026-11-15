@@ -107,3 +107,10 @@ descendant labels but not `Tab`, so tabs need the explicit label. AT-SPI exposes
 and xilem's `radio_button` view adds `accessible_label`. Writer's settings segments show a short face
 ("Left | Right") while each radio keeps a name that makes sense out of context ("Script pane on the
 left"). Remove this when upstream radio buttons accept a name separate from their label.
+
+`VirtualScroll` takes the same accessible label and focusable flag as `Portal`
+(`with_accessible_label`, `set_accessible_label`, `with_focusable`, `set_focusable`), and xilem's
+`virtual_scroll` view adds `accessible_label` and `focusable`. A non-focusable list leaves the Tab
+order while keys its focused items leave unhandled still bubble to its scrolling, and scrolling now
+requests an accessibility update so the node's scroll position and actions stay current. Writer's
+picker results list uses it. Remove this when upstream virtual scroll offers both.
