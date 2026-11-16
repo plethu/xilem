@@ -652,11 +652,17 @@ impl Widget for VirtualScroll {
                 (Axis::Horizontal, true, _) | (Axis::Vertical, _, false) => delta_px.y,
             };
 
+            let offset = self.virtual_list.scroll_offset();
             if self.scroll_by(-delta) {
                 ctx.request_layout();
             }
             ctx.request_compose();
             ctx.request_accessibility_update();
+            // A list that moved keeps the wheel; one already at its end passes it on, so an
+            // enclosing scroll view scrolls instead of both scrolling at once.
+            if self.virtual_list.scroll_offset() != offset {
+                ctx.set_handled();
+            }
         }
     }
 
@@ -1200,6 +1206,57 @@ mod tests {
         harness.edit_root_widget(|mut scroll| VirtualScroll::set_overscan(&mut scroll, 0., 0.));
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_eq!(harness.root_widget().len(), 10);
+    }
+
+    #[test]
+    fn wheel_is_kept_while_the_list_moves_and_passed_on_at_its_ends() {
+        use crate::core::{Handled, PointerEvent, PointerScrollEvent, PointerState, ScrollDelta};
+        use crate::dpi::PhysicalPosition;
+        use crate::layout::AsUnit;
+        use crate::testing::PRIMARY_MOUSE;
+        use crate::widgets::SizedBox;
+
+        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
+            VirtualScroll::will_handle_action(&mut scroll, &action);
+            for idx in action.old_active.clone() {
+                if !action.target.contains(&idx) {
+                    VirtualScroll::remove_child(&mut scroll, idx);
+                }
+            }
+            for idx in action.target {
+                if !action.old_active.contains(&idx) {
+                    VirtualScroll::add_child(
+                        &mut scroll,
+                        idx,
+                        NewWidget::new(SizedBox::empty().height(20.px())).erased(),
+                    );
+                }
+            }
+        }
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 20).prepare(),
+            (100, 200),
+        );
+        let virtual_scroll_id = harness.root_id();
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        harness.mouse_move_to(virtual_scroll_id);
+        let wheel = |harness: &mut TestHarness<VirtualScroll>, y: f64| {
+            let handled = harness.process_pointer_event(PointerEvent::Scroll(PointerScrollEvent {
+                pointer: PRIMARY_MOUSE,
+                delta: ScrollDelta::PixelDelta(PhysicalPosition { x: 0., y }),
+                state: PointerState::default(),
+            }));
+            drive_to_fixpoint(harness, virtual_scroll_id, driver);
+            handled
+        };
+        // At the start, scrolling back has nowhere to go.
+        assert_eq!(wheel(&mut harness, 30.), Handled::No);
+        assert_eq!(wheel(&mut harness, -30.), Handled::Yes);
+        // Past the end, scrolling on has nowhere to go.
+        assert_eq!(wheel(&mut harness, -1000.), Handled::Yes);
+        assert_eq!(wheel(&mut harness, -30.), Handled::No);
+        assert_eq!(wheel(&mut harness, 30.), Handled::Yes);
     }
 
     #[test]

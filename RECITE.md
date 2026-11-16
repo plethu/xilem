@@ -127,6 +127,11 @@ virtual scroll lets callers bound its overscan.
 list's start each time. Writer's beat list follows the selected beat with it, so pressing a beat in
 view never moves the list. Remove this when upstream virtual scroll can follow an item.
 
+`VirtualScroll` keeps a wheel event only while it scrolls: one already at its start or end leaves
+the event unhandled, so it bubbles to an enclosing `Portal`, which used to scroll at the same time
+as the list. Writer's beat list sits inside its scrollable scene list. Remove this when upstream
+virtual scroll chains wheel scrolling.
+
 `FlexBasis::Length` gives a flex child a fixed basis that it gets before free space is shared, so
 a flexible child keeps that minimum while the row has room for every basis. Writer's file tab uses
 it to stay at least 96px wide and grow from there. Remove this when upstream `Flex` supports
