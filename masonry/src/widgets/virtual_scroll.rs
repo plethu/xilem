@@ -594,6 +594,18 @@ impl VirtualScroll {
         this.ctx.request_layout();
     }
 
+    /// Scrolls just far enough to show the whole item at `idx`, and not at all when it is
+    /// already in view.
+    ///
+    /// Unlike [`scroll_to`](Self::scroll_to), this keeps the user's scroll position wherever it
+    /// can, so a list can follow a selection that moves without jumping on every change.
+    pub fn scroll_into_view(this: &mut WidgetMut<'_, Self>, idx: usize) {
+        this.widget
+            .virtual_list
+            .scroll_to_index(idx, ScrollAlign::Nearest);
+        this.ctx.request_layout();
+    }
+
     /// Forcefully aligns the top of the item at `idx` with the top of the
     /// virtual scroll area.
     ///
@@ -1113,7 +1125,7 @@ mod tests {
     }
 
     #[test]
-    fn overscan_bounds_the_loaded_items() {
+    fn overscan_bounds_the_loaded_items_and_items_scroll_just_into_view() {
         use crate::layout::AsUnit;
         use crate::widgets::SizedBox;
 
@@ -1158,6 +1170,24 @@ mod tests {
         // Negative overscan counts as none.
         let (range, _) = loaded(VirtualScroll::new(0, 100).with_overscan(-1., -1.), 40);
         assert_eq!(range, 40..50);
+
+        // Bringing an item into view scrolls only as far as it needs.
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(40, 100).with_overscan(0., 0.).prepare(),
+            (100, 200),
+        );
+        let virtual_scroll_id = harness.root_id();
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_view(&mut scroll, 45));
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        assert_eq!(harness.root_widget().active_range, 40..50);
+        harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_view(&mut scroll, 52));
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        assert_eq!(harness.root_widget().active_range, 43..53);
+        harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_view(&mut scroll, 10));
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        assert_eq!(harness.root_widget().active_range, 10..20);
 
         // Changing it at runtime reloads.
         let mut harness = TestHarness::create_with_size(

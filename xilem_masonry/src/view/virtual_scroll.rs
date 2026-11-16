@@ -21,6 +21,7 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     phantom: PhantomData<fn() -> (WidgetPod<dyn Widget>, State, Action, ChildrenViews)>,
     func: F,
     anchor_index: Option<usize>,
+    revealed: Option<usize>,
     len: usize,
     start_at: f64,
     end_at: f64,
@@ -78,6 +79,7 @@ where
         phantom: PhantomData,
         func,
         anchor_index: None,
+        revealed: None,
         len,
         start_at: 0.,
         end_at: 1.,
@@ -116,6 +118,7 @@ where
         phantom: PhantomData,
         func,
         anchor_index: None,
+        revealed: None,
         len: usize::MAX,
         start_at: 0.,
         end_at: 1.,
@@ -134,6 +137,16 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
     /// Sets the top of the child to the start position of viewport.
     pub fn jump_to(mut self, anchor_index: Option<usize>) -> Self {
         self.anchor_index = anchor_index;
+        self
+    }
+
+    /// Keeps the child with the specified index in view, such as a list's selected item.
+    ///
+    /// When the index changes, the list scrolls only as far as it needs to show the whole child
+    /// (see [`widgets::VirtualScroll::scroll_into_view`]); a list built without
+    /// [`jump_to`](Self::jump_to) opens with this child at its start.
+    pub fn reveal(mut self, index: Option<usize>) -> Self {
+        self.revealed = index;
         self
     }
 
@@ -189,6 +202,7 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             phantom: self.phantom,
             func: self.func,
             anchor_index: self.anchor_index,
+            revealed: self.revealed,
             len: self.len,
             start_at: self.start_at,
             end_at: self.end_at,
@@ -263,7 +277,8 @@ where
     fn build(&self, ctx: &mut ViewCtx, _: &mut State) -> (Self::Element, Self::ViewState) {
         // TODO: How does the anchor interact with Xilem?
         // Setting that seems like an imperative action?
-        let mut widget = widgets::VirtualScroll::new(self.anchor_index.unwrap_or(0), self.len)
+        let anchor = self.anchor_index.or(self.revealed).unwrap_or(0);
+        let mut widget = widgets::VirtualScroll::new(anchor, self.len)
             .with_start_end(self.start_at, self.end_at)
             .with_direction(self.direction)
             .with_scrolling(self.scrolling)
@@ -300,6 +315,12 @@ where
         let len_changed = self.len != prev.len;
         if len_changed {
             widgets::VirtualScroll::set_len(&mut element, self.len);
+        }
+        // After the length, so the item to reveal exists.
+        if self.revealed != prev.revealed
+            && let Some(idx) = self.revealed
+        {
+            widgets::VirtualScroll::scroll_into_view(&mut element, idx);
         }
 
         let start_at = self.start_at != prev.start_at;

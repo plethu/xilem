@@ -122,6 +122,11 @@ sidebar beat list loads one row either side of the rows in view, so a scene of t
 mounts about a dozen rows; focusing a row still pans it into view. Remove this when upstream
 virtual scroll lets callers bound its overscan.
 
+`VirtualScroll::scroll_into_view` scrolls only as far as it needs to show a whole item, and xilem's
+`reveal` builder calls it whenever its index changes, where `jump_to` aligns the item with the
+list's start each time. Writer's beat list follows the selected beat with it, so pressing a beat in
+view never moves the list. Remove this when upstream virtual scroll can follow an item.
+
 `FlexBasis::Length` gives a flex child a fixed basis that it gets before free space is shared, so
 a flexible child keeps that minimum while the row has room for every basis. Writer's file tab uses
 it to stay at least 96px wide and grow from there. Remove this when upstream `Flex` supports
