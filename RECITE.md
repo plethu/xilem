@@ -115,6 +115,13 @@ order while keys its focused items leave unhandled still bubble to its scrolling
 requests an accessibility update so the node's scroll position and actions stay current. Writer's
 picker results list uses it. Remove this when upstream virtual scroll offers both.
 
+`VirtualScroll` also takes an overscan (`with_overscan`, `set_overscan`; xilem's `overscan`): how
+many viewport lengths of items stay loaded before and after the viewport, instead of the fixed one
+before and two after, which stays the default as `VirtualScroll::DEFAULT_OVERSCAN`. Writer's
+sidebar beat list loads one row either side of the rows in view, so a scene of thousands of beats
+mounts about a dozen rows; focusing a row still pans it into view. Remove this when upstream
+virtual scroll lets callers bound its overscan.
+
 `FlexBasis::Length` gives a flex child a fixed basis that it gets before free space is shared, so
 a flexible child keeps that minimum while the row has room for every basis. Writer's file tab uses
 it to stay at least 96px wide and grow from there. Remove this when upstream `Flex` supports

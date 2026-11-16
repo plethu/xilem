@@ -28,6 +28,7 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     scrolling: bool,
     accessible_label: Option<ArcStr>,
     focusable: bool,
+    overscan: (f64, f64),
     on_scroll: G,
 }
 
@@ -84,6 +85,7 @@ where
         scrolling: false,
         accessible_label: None,
         focusable: true,
+        overscan: widgets::VirtualScroll::DEFAULT_OVERSCAN,
         on_scroll: private::do_nothing::<State, Action>,
     }
 }
@@ -121,6 +123,7 @@ where
         scrolling: false,
         accessible_label: None,
         focusable: true,
+        overscan: widgets::VirtualScroll::DEFAULT_OVERSCAN,
         on_scroll: private::do_nothing::<State, Action>,
     }
 }
@@ -170,6 +173,14 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
         self
     }
 
+    /// Sets how far past the viewport items stay built, in viewport lengths before and after it.
+    ///
+    /// See [`widgets::VirtualScroll::with_overscan`] for more details.
+    pub fn overscan(mut self, before: f64, after: f64) -> Self {
+        self.overscan = (before, after);
+        self
+    }
+
     /// Sets the scroll handler.
     ///
     /// A scroll handler enables saving the current index of the scroll view, among others.
@@ -185,6 +196,7 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             scrolling: self.scrolling,
             accessible_label: self.accessible_label,
             focusable: self.focusable,
+            overscan: self.overscan,
             on_scroll,
         }
     }
@@ -255,7 +267,8 @@ where
             .with_start_end(self.start_at, self.end_at)
             .with_direction(self.direction)
             .with_scrolling(self.scrolling)
-            .with_focusable(self.focusable);
+            .with_focusable(self.focusable)
+            .with_overscan(self.overscan.0, self.overscan.1);
         if let Some(label) = &self.accessible_label {
             widget = widget.with_accessible_label(label.clone());
         }
@@ -316,6 +329,9 @@ where
         }
         if self.focusable != prev.focusable {
             widgets::VirtualScroll::set_focusable(&mut element, self.focusable);
+        }
+        if self.overscan != prev.overscan {
+            widgets::VirtualScroll::set_overscan(&mut element, self.overscan.0, self.overscan.1);
         }
 
         // TODO: This code should be moved into `Self::message` once it becomes possible to

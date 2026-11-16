@@ -218,6 +218,8 @@ pub struct VirtualScroll {
 
     accessible_label: Option<ArcStr>,
     focusable: bool,
+    /// How far past the viewport items stay loaded, before and after it, in viewport lengths.
+    overscan: (f64, f64),
 }
 
 impl std::fmt::Debug for VirtualScroll {
@@ -237,6 +239,7 @@ impl std::fmt::Debug for VirtualScroll {
             .field("scrolling", &self.scrolling)
             .field("accessible_label", &self.accessible_label)
             .field("focusable", &self.focusable)
+            .field("overscan", &self.overscan)
             .finish()
     }
 }
@@ -276,6 +279,7 @@ impl VirtualScroll {
             scrolling: false,
             accessible_label: None,
             focusable: true,
+            overscan: Self::DEFAULT_OVERSCAN,
         }
     }
 
@@ -325,10 +329,26 @@ impl VirtualScroll {
         self.focusable = focusable;
         self
     }
+
+    /// Sets how far past the viewport items stay loaded, as multiples of the viewport's
+    /// main-axis length: `before` it and `after` it.
+    ///
+    /// The default is one viewport before and two after. A short list of heavy items can lower
+    /// both, down to `0.` for only the items in view; focusing an item still pans it into view.
+    /// Negative values count as `0.`.
+    pub fn with_overscan(mut self, before: f64, after: f64) -> Self {
+        self.overscan = (before.max(0.), after.max(0.));
+        self
+    }
 }
 
 // --- MARK: METHODS
 impl VirtualScroll {
+    /// The default overscan: one viewport before the viewport and two after it.
+    ///
+    /// See [`VirtualScroll::with_overscan`].
+    pub const DEFAULT_OVERSCAN: (f64, f64) = (1., 2.);
+
     /// The number of currently active children in this widget.
     ///
     /// This is intended for sanity-checking of higher-level processes (i.e. so that inconsistencies can be caught early).
@@ -566,6 +586,14 @@ impl VirtualScroll {
         }
     }
 
+    /// Sets how far past the viewport items stay loaded.
+    ///
+    /// See [`VirtualScroll::with_overscan`] for more details.
+    pub fn set_overscan(this: &mut WidgetMut<'_, Self>, before: f64, after: f64) {
+        this.widget.overscan = (before.max(0.), after.max(0.));
+        this.ctx.request_layout();
+    }
+
     /// Forcefully aligns the top of the item at `idx` with the top of the
     /// virtual scroll area.
     ///
@@ -785,8 +813,12 @@ impl Widget for VirtualScroll {
         let start_at = self.start_at * main_axis_length;
         let end_at = self.end_at * main_axis_length;
         self.virtual_list.set_viewport_extent(end_at - start_at);
-        self.virtual_list
-            .set_overscan(main_axis_length + start_at, main_axis_length * 3. - end_at);
+        // The overscan also covers the parts of the widget outside the list's own viewport.
+        let (before, after) = self.overscan;
+        self.virtual_list.set_overscan(
+            main_axis_length * before + start_at,
+            main_axis_length * (after + 1.) - end_at,
+        );
 
         let offset_of_anchor = self.virtual_list.offset_of(self.anchor_index);
         self.virtual_list
@@ -1078,6 +1110,66 @@ mod tests {
         let node = harness.access_node(virtual_scroll_id).unwrap();
         assert!(node.data().supports_action(accesskit::Action::Focus));
         assert_eq!(node.data().label(), None);
+    }
+
+    #[test]
+    fn overscan_bounds_the_loaded_items() {
+        use crate::layout::AsUnit;
+        use crate::widgets::SizedBox;
+
+        fn driver(action: VirtualScrollFetchAction, mut scroll: WidgetMut<'_, VirtualScroll>) {
+            VirtualScroll::will_handle_action(&mut scroll, &action);
+            for idx in action.old_active.clone() {
+                if !action.target.contains(&idx) {
+                    VirtualScroll::remove_child(&mut scroll, idx);
+                }
+            }
+            for idx in action.target {
+                if !action.old_active.contains(&idx) {
+                    VirtualScroll::add_child(
+                        &mut scroll,
+                        idx,
+                        NewWidget::new(SizedBox::empty().height(20.px())).erased(),
+                    );
+                }
+            }
+        }
+        // Ten 20px items fill the 200px viewport.
+        let loaded = |scroll: VirtualScroll, anchor: usize| {
+            let mut harness =
+                TestHarness::create_with_size(test_property_set(), scroll.prepare(), (100, 200));
+            let virtual_scroll_id = harness.root_id();
+            drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+            harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_to(&mut scroll, anchor));
+            drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+            let scroll = harness.root_widget();
+            (scroll.active_range.clone(), scroll.len())
+        };
+
+        // By default one viewport stays loaded before and two after.
+        let (range, len) = loaded(VirtualScroll::new(0, 100), 40);
+        assert_eq!((range, len), (30..70, 40));
+        // Only the items in view.
+        let (range, len) = loaded(VirtualScroll::new(0, 100).with_overscan(0., 0.), 40);
+        assert_eq!((range, len), (40..50, 10));
+        // One item either side.
+        let (range, len) = loaded(VirtualScroll::new(0, 100).with_overscan(0.1, 0.1), 40);
+        assert_eq!((range, len), (39..51, 12));
+        // Negative overscan counts as none.
+        let (range, _) = loaded(VirtualScroll::new(0, 100).with_overscan(-1., -1.), 40);
+        assert_eq!(range, 40..50);
+
+        // Changing it at runtime reloads.
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(40, 100).prepare(),
+            (100, 200),
+        );
+        let virtual_scroll_id = harness.root_id();
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        harness.edit_root_widget(|mut scroll| VirtualScroll::set_overscan(&mut scroll, 0., 0.));
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        assert_eq!(harness.root_widget().len(), 10);
     }
 
     #[test]
