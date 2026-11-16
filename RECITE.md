@@ -119,3 +119,8 @@ picker results list uses it. Remove this when upstream virtual scroll offers bot
 a flexible child keeps that minimum while the row has room for every basis. Writer's file tab uses
 it to stay at least 96px wide and grow from there. Remove this when upstream `Flex` supports
 minimum sizes for flexible children.
+
+`ScrollBar` paints its thumb from a `ScrollThumbColor { fill, edge }` property instead of the
+`SCROLLBAR_COLOR` and `SCROLLBAR_BORDER_COLOR` constants, which stay its defaults. Writer sets
+it per theme, so a dark window no longer shows a white thumb. Remove this when upstream scroll
+bars take their colours from properties.

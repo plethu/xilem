@@ -16,7 +16,7 @@ use crate::core::{
 use crate::imaging::{Composite, GroupRef, Painter};
 use crate::kurbo::{Axis, Point, Rect, Size, Stroke};
 use crate::layout::{AsUnit, LenReq, Length};
-use crate::properties::Collapsible;
+use crate::properties::{Collapsible, ScrollThumbColor};
 use crate::theme;
 use crate::widgets::AnimatedF32;
 
@@ -173,6 +173,7 @@ impl ScrollBar {
 }
 
 impl UsesProperty<Collapsible> for ScrollBar {}
+impl UsesProperty<ScrollThumbColor> for ScrollBar {}
 
 // --- MARK: IMPL WIDGET
 impl Widget for ScrollBar {
@@ -362,7 +363,7 @@ impl Widget for ScrollBar {
     fn register_children(&mut self, _ctx: &mut RegisterCtx<'_>) {}
 
     fn property_changed(&mut self, ctx: &mut UpdateCtx<'_>, property_type: TypeId) {
-        if Collapsible::matches(property_type) {
+        if Collapsible::matches(property_type) || ScrollThumbColor::matches(property_type) {
             ctx.request_paint_only();
         }
     }
@@ -399,6 +400,7 @@ impl Widget for ScrollBar {
     ) {
         let cache = ctx.property_cache();
         let collapsible = props.get::<Collapsible>(cache).0;
+        let colors = *props.get::<ScrollThumbColor>(cache);
 
         if self.opacity.value() != 1. {
             painter.push_fill_clip(ctx.border_box());
@@ -427,13 +429,9 @@ impl Widget for ScrollBar {
             .inset((-inset_x0, -inset_y0, -inset_x1, -inset_y1))
             .to_rounded_rect(radius);
 
-        painter.fill(cursor_rect, theme::SCROLLBAR_COLOR).draw();
+        painter.fill(cursor_rect, colors.fill).draw();
         painter
-            .stroke(
-                cursor_rect,
-                &Stroke::new(edge_width),
-                theme::SCROLLBAR_BORDER_COLOR,
-            )
+            .stroke(cursor_rect, &Stroke::new(edge_width), colors.edge)
             .draw();
 
         if self.opacity.value() != 1. {
@@ -536,6 +534,30 @@ mod tests {
 
         harness.mouse_move(Point::new(30.0, 300.0));
         assert_render_snapshot!(harness, "scrollbar_bottom");
+    }
+
+    #[test]
+    fn thumb_takes_its_colors_from_a_property() {
+        let red = crate::peniko::Color::from_rgb8(0xc0, 0x10, 0x20);
+        let widget = NewWidget::new(ScrollBar::new(Axis::Vertical, 200.0, 600.0))
+            .with_props(ScrollThumbColor {
+                fill: red,
+                edge: red,
+            })
+            .with_props(Dimensions::FIT);
+
+        let mut harness = TestHarness::create_with_size(test_property_set(), widget, (50, 200));
+        let image = harness.render();
+        if image.width() == 1 {
+            // Rendering is skipped in this environment.
+            return;
+        }
+        let thumb = image
+            .pixels()
+            .filter(|pixel| pixel.0[..3] == [0xc0, 0x10, 0x20])
+            .count();
+        // The thumb is a third of the 200px track and the bar's width, less its rounded corners.
+        assert!(thumb > 400, "{thumb} thumb pixels");
     }
 
     #[test]
