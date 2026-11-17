@@ -1190,6 +1190,12 @@ impl<const EDITABLE: bool> Widget for TextArea<EDITABLE> {
         if !label.label.is_empty() {
             node.set_label(label.label.to_string());
         }
+        if !label.description.is_empty() {
+            node.set_description(label.description.to_string());
+        }
+        if label.invalid {
+            node.set_invalid(accesskit::Invalid::True);
+        }
 
         let cache = ctx.property_cache();
         let text_color = props.get::<ContentColor>(cache);
