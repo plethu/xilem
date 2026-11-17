@@ -812,6 +812,9 @@ impl Widget for VirtualScroll {
         // Calculate the sizes of all children
         self.virtual_list.model_mut().clear();
         for (idx, child) in &mut self.items {
+            // A child left outside the loaded range while the driver had not yet removed it was
+            // stashed below; it is measured again here and stashed again if still outside.
+            ctx.set_stashed(child, false);
             let auto_size = SizeDef::fit(size).with(self.direction.axis(), LenDef::MaxContent);
             let child_size = ctx.compute_size(child, auto_size, size.into());
             ctx.run_layout(child, child_size);
@@ -1194,6 +1197,21 @@ mod tests {
         harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_view(&mut scroll, 10));
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_eq!(harness.root_widget().active_range, 10..20);
+
+        // A relayout before the driver catches up measures the children it stashed again.
+        let mut harness = TestHarness::create_with_size(
+            test_property_set(),
+            VirtualScroll::new(0, 100).with_overscan(0., 0.).prepare(),
+            (100, 200),
+        );
+        let virtual_scroll_id = harness.root_id();
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_view(&mut scroll, 60));
+        let _ = harness.render();
+        harness.edit_root_widget(|mut scroll| VirtualScroll::set_overscan(&mut scroll, 0.1, 0.1));
+        let _ = harness.render();
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        assert_eq!(harness.root_widget().active_range, 50..62);
 
         // Changing it at runtime reloads.
         let mut harness = TestHarness::create_with_size(

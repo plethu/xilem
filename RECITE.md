@@ -132,6 +132,12 @@ the event unhandled, so it bubbles to an enclosing `Portal`, which used to scrol
 as the list. Writer's beat list sits inside its scrollable scene list. Remove this when upstream
 virtual scroll chains wheel scrolling.
 
+`VirtualScroll` stashes a child that falls outside its loaded range before the driver removes it,
+and its next layout measured every child, so a relayout in between, such as a short list scrolled
+far by `scroll_into_view` and then resized, panicked on the stashed child. Layout now unstashes
+each child before measuring it and stashes it again if it is still outside. Remove this when
+upstream virtual scroll stops laying out the children it stashed.
+
 `FlexBasis::Length` gives a flex child a fixed basis that it gets before free space is shared, so
 a flexible child keeps that minimum while the row has room for every basis. Writer's file tab uses
 it to stay at least 96px wide and grow from there. Remove this when upstream `Flex` supports
