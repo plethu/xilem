@@ -4,7 +4,7 @@
 use std::marker::PhantomData;
 
 use masonry::core::{ArcStr, NewWidget, PropertySet, StyleProperty};
-use masonry::parley::{FontWeight, LineHeight};
+use masonry::parley::{FontFamily, FontFamilyName, FontWeight, GenericFamily, LineHeight};
 use masonry::properties::{ContentColor, LineBreaking};
 use masonry::widgets;
 
@@ -21,6 +21,7 @@ pub fn prose<State, Action>(content: impl Into<ArcStr>) -> Prose<State, Action> 
         line_break_mode: LineBreaking::WordWrap,
         weight: FontWeight::NORMAL,
         line_height: masonry::theme::TEXT_LINE_HEIGHT,
+        font: FontFamily::Single(FontFamilyName::Generic(GenericFamily::SystemUi)),
         phantom: PhantomData,
     }
 }
@@ -46,6 +47,7 @@ pub struct Prose<State, Action> {
     line_break_mode: LineBreaking,
     weight: FontWeight,
     line_height: LineHeight,
+    font: FontFamily<'static>,
     phantom: PhantomData<fn(State) -> Action>,
     // TODO: disabled: bool,
     // TODO: add more attributes of `masonry::widgets::Prose`
@@ -92,6 +94,15 @@ impl<State, Action> Prose<State, Action> {
         self.line_height = line_height;
         self
     }
+
+    /// Set the [font family](FontFamily) the text will use.
+    ///
+    /// A font family allows for providing fallbacks. If there is no matching font
+    /// for a character, a system font will be used (if the system fonts are enabled).
+    pub fn font(mut self, font: impl Into<FontFamily<'static>>) -> Self {
+        self.font = font.into();
+        self
+    }
 }
 
 fn line_break_clips(linebreaking: LineBreaking) -> bool {
@@ -109,6 +120,7 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
             .with_style(StyleProperty::FontSize(self.text_size))
             .with_style(StyleProperty::FontWeight(self.weight))
             .with_style(StyleProperty::LineHeight(self.line_height))
+            .with_style(StyleProperty::FontFamily(self.font.clone()))
             .with_word_wrap(self.line_break_mode == LineBreaking::WordWrap);
 
         // TODO - Replace this with properties on the Prose view
@@ -163,6 +175,12 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for Prose<Sta
             widgets::TextArea::insert_style(
                 &mut text_area,
                 StyleProperty::LineHeight(self.line_height),
+            );
+        }
+        if prev.font != self.font {
+            widgets::TextArea::insert_style(
+                &mut text_area,
+                StyleProperty::FontFamily(self.font.clone()),
             );
         }
         if prev.line_break_mode != self.line_break_mode {

@@ -268,6 +268,9 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
             widgets::TextInput::from_text_area(NewWidget::new(text_area).with_props(props))
                 .with_text_alignment(self.text_alignment)
                 .with_clip(self.clip)
+                .with_placeholder_style(StyleProperty::FontWeight(self.weight))
+                .with_placeholder_style(StyleProperty::LineHeight(self.line_height))
+                .with_placeholder_style(StyleProperty::FontFamily(self.font.clone()))
                 .with_placeholder(self.placeholder.clone());
 
         // Ensure that the actions from the *inner* TextArea get routed correctly.
@@ -309,6 +312,29 @@ impl<State: 'static, Action: 'static> View<State, Action, ViewCtx> for TextInput
 
         if self.text_alignment != prev.text_alignment {
             widgets::TextInput::set_text_alignment(&mut element, self.text_alignment);
+        }
+
+        // The placeholder sets its text in the field's own type; its size is a property.
+        {
+            let mut placeholder = widgets::TextInput::placeholder_mut(&mut element);
+            if prev.weight != self.weight {
+                widgets::Label::insert_style(
+                    &mut placeholder,
+                    StyleProperty::FontWeight(self.weight),
+                );
+            }
+            if prev.line_height != self.line_height {
+                widgets::Label::insert_style(
+                    &mut placeholder,
+                    StyleProperty::LineHeight(self.line_height),
+                );
+            }
+            if prev.font != self.font {
+                widgets::Label::insert_style(
+                    &mut placeholder,
+                    StyleProperty::FontFamily(self.font.clone()),
+                );
+            }
         }
 
         let mut text_area = widgets::TextInput::text_mut(&mut element);

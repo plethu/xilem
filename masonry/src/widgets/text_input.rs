@@ -47,6 +47,8 @@ pub struct TextInput {
     // TODO: We want placeholder to clip even when wordwrap is enabled.
     placeholder: WidgetPod<Label>,
     placeholder_text: ArcStr,
+    /// Styles the placeholder takes on top of a label's defaults, such as the text's own font.
+    placeholder_styles: Vec<StyleProperty>,
 
     /// The text alignment for both the text area and placeholder.
     text_alignment: TextAlign,
@@ -74,6 +76,7 @@ impl TextInput {
                 .with_props(LineBreaking::Clip)
                 .to_pod(),
             placeholder_text: "".into(),
+            placeholder_styles: Vec::new(),
             text_alignment: TextAlign::default(),
             clip: false,
         }
@@ -90,7 +93,11 @@ impl TextInput {
     /// To modify this on active text input, use [`set_placeholder`](Self::set_placeholder).
     pub fn with_placeholder(mut self, placeholder_text: impl Into<ArcStr>) -> Self {
         let placeholder_text = placeholder_text.into();
-        let label = Label::new(placeholder_text.clone()).with_text_alignment(self.text_alignment);
+        let mut label =
+            Label::new(placeholder_text.clone()).with_text_alignment(self.text_alignment);
+        for style in &self.placeholder_styles {
+            label = label.with_style(style.clone());
+        }
         self.placeholder = label
             .accessibility_hidden(true)
             .prepare()
@@ -98,6 +105,15 @@ impl TextInput {
             .to_pod();
         self.placeholder_text = placeholder_text;
         self
+    }
+
+    /// Sets a style property for the placeholder, such as the font its text area uses.
+    ///
+    /// To modify this on active text input, use [`placeholder_mut`](Self::placeholder_mut).
+    pub fn with_placeholder_style(mut self, property: impl Into<StyleProperty>) -> Self {
+        self.placeholder_styles.push(property.into());
+        let placeholder_text = self.placeholder_text.clone();
+        self.with_placeholder(placeholder_text)
     }
 
     /// Whether to clip the text to the drawn boundaries.
