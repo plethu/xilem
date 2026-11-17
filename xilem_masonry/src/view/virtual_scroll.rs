@@ -22,6 +22,8 @@ pub struct VirtualScroll<State, Action, ChildrenViews, F, G> {
     func: F,
     anchor_index: Option<usize>,
     revealed: Option<usize>,
+    /// Whether a revealed item is brought to the middle of the view rather than just into it.
+    middle: bool,
     len: usize,
     start_at: f64,
     end_at: f64,
@@ -80,6 +82,7 @@ where
         func,
         anchor_index: None,
         revealed: None,
+        middle: false,
         len,
         start_at: 0.,
         end_at: 1.,
@@ -119,6 +122,7 @@ where
         func,
         anchor_index: None,
         revealed: None,
+        middle: false,
         len: usize::MAX,
         start_at: 0.,
         end_at: 1.,
@@ -147,6 +151,14 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
     /// [`jump_to`](Self::jump_to) opens with this child at its start.
     pub fn reveal(mut self, index: Option<usize>) -> Self {
         self.revealed = index;
+        self
+    }
+
+    /// Brings each newly [revealed](Self::reveal) child to the middle of the view, as far as the
+    /// list's ends allow (see [`widgets::VirtualScroll::scroll_into_middle`]), so part of a child
+    /// shows past either edge while more lie beyond it.
+    pub fn reveal_in_middle(mut self, middle: bool) -> Self {
+        self.middle = middle;
         self
     }
 
@@ -203,6 +215,7 @@ impl<State, Action, ChildrenViews, F, G> VirtualScroll<State, Action, ChildrenVi
             func: self.func,
             anchor_index: self.anchor_index,
             revealed: self.revealed,
+            middle: self.middle,
             len: self.len,
             start_at: self.start_at,
             end_at: self.end_at,
@@ -320,7 +333,11 @@ where
         if self.revealed != prev.revealed
             && let Some(idx) = self.revealed
         {
-            widgets::VirtualScroll::scroll_into_view(&mut element, idx);
+            if self.middle {
+                widgets::VirtualScroll::scroll_into_middle(&mut element, idx);
+            } else {
+                widgets::VirtualScroll::scroll_into_view(&mut element, idx);
+            }
         }
 
         let start_at = self.start_at != prev.start_at;

@@ -606,6 +606,18 @@ impl VirtualScroll {
         this.ctx.request_layout();
     }
 
+    /// Scrolls so the item at `idx` sits in the middle of the viewport, as far as the list's
+    /// ends allow.
+    ///
+    /// A list that follows a selection this way shows part of an item past either edge whenever
+    /// more items lie beyond it, rather than leaving the selection flush against an edge.
+    pub fn scroll_into_middle(this: &mut WidgetMut<'_, Self>, idx: usize) {
+        this.widget
+            .virtual_list
+            .scroll_to_index(idx, ScrollAlign::Center);
+        this.ctx.request_layout();
+    }
+
     /// Forcefully aligns the top of the item at `idx` with the top of the
     /// virtual scroll area.
     ///
@@ -1197,6 +1209,10 @@ mod tests {
         harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_view(&mut scroll, 10));
         drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
         assert_eq!(harness.root_widget().active_range, 10..20);
+        // Bringing an item to the middle leaves part of an item past either edge.
+        harness.edit_root_widget(|mut scroll| VirtualScroll::scroll_into_middle(&mut scroll, 45));
+        drive_to_fixpoint(&mut harness, virtual_scroll_id, driver);
+        assert_eq!(harness.root_widget().active_range, 40..51);
 
         // A relayout before the driver catches up measures the children it stashed again.
         let mut harness = TestHarness::create_with_size(
