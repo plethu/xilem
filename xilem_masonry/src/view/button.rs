@@ -93,6 +93,7 @@ pub fn button<
         access_state: ButtonAccessState::default(),
         role: Role::Button,
         accessible_label: None,
+        accessible_description: None,
         focusable: true,
         phantom: PhantomData,
     }
@@ -141,6 +142,7 @@ pub fn button_any_pointer<State: 'static, Action, V: WidgetView<State, Action>>(
         access_state: ButtonAccessState::default(),
         role: Role::Button,
         accessible_label: None,
+        accessible_description: None,
         focusable: true,
         phantom: PhantomData,
     }
@@ -157,6 +159,7 @@ pub struct Button<State, Action, F, V> {
     access_state: ButtonAccessState,
     role: Role,
     accessible_label: Option<ArcStr>,
+    accessible_description: Option<ArcStr>,
     focusable: bool,
     phantom: PhantomData<fn(State) -> Action>,
 }
@@ -210,6 +213,13 @@ impl<State, Action, F, V> Button<State, Action, F, V> {
         self
     }
 
+    /// Sets the description assistive technology reads after the name, such as why the button
+    /// is unavailable.
+    pub fn accessible_description(mut self, description: impl Into<ArcStr>) -> Self {
+        self.accessible_description = Some(description.into());
+        self
+    }
+
     /// Sets whether Tab and Shift+Tab can focus the button. The default is `true`.
     ///
     /// A button that isn't focusable can still be focused by pointer presses, by code and by
@@ -249,6 +259,9 @@ where
                 if let Some(label) = &self.accessible_label {
                     button = button.with_accessible_label(label.clone());
                 }
+                if let Some(description) = &self.accessible_description {
+                    button = button.with_accessible_description(description.clone());
+                }
                 let mut pod = ctx.create_pod(button);
                 pod.new_widget.options.disabled = self.disabled;
                 pod
@@ -276,6 +289,12 @@ where
         }
         if prev.accessible_label != self.accessible_label {
             widgets::Button::set_accessible_label(&mut element, self.accessible_label.clone());
+        }
+        if prev.accessible_description != self.accessible_description {
+            widgets::Button::set_accessible_description(
+                &mut element,
+                self.accessible_description.clone(),
+            );
         }
         if prev.focusable != self.focusable {
             widgets::Button::set_focusable(&mut element, self.focusable);

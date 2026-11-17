@@ -36,6 +36,7 @@ pub struct Button {
     access_state: ButtonAccessState,
     role: Role,
     accessible_label: Option<ArcStr>,
+    accessible_description: Option<ArcStr>,
     focusable: bool,
 }
 
@@ -77,6 +78,7 @@ impl Button {
             access_state: ButtonAccessState::default(),
             role: Role::Button,
             accessible_label: None,
+            accessible_description: None,
             focusable: true,
         }
     }
@@ -128,6 +130,13 @@ impl Button {
     /// labels. An explicit name replaces that.
     pub fn with_accessible_label(mut self, label: impl Into<ArcStr>) -> Self {
         self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Builder-style method to set the description assistive technology reads after the
+    /// button's name, such as why it is unavailable.
+    pub fn with_accessible_description(mut self, description: impl Into<ArcStr>) -> Self {
+        self.accessible_description = Some(description.into());
         self
     }
 
@@ -189,6 +198,17 @@ impl Button {
     /// See [`Button::with_accessible_label`] for more details.
     pub fn set_accessible_label(this: &mut WidgetMut<'_, Self>, label: Option<impl Into<ArcStr>>) {
         this.widget.accessible_label = label.map(Into::into);
+        this.ctx.request_accessibility_update();
+    }
+
+    /// Sets the description assistive technology reads after the button's name.
+    ///
+    /// See [`Button::with_accessible_description`] for more details.
+    pub fn set_accessible_description(
+        this: &mut WidgetMut<'_, Self>,
+        description: Option<impl Into<ArcStr>>,
+    ) {
+        this.widget.accessible_description = description.map(Into::into);
         this.ctx.request_accessibility_update();
     }
 
@@ -356,6 +376,9 @@ impl Widget for Button {
         }
         if let Some(label) = &self.accessible_label {
             node.set_label(&**label);
+        }
+        if let Some(description) = &self.accessible_description {
+            node.set_description(&**description);
         }
 
         let ButtonAccessState {
@@ -556,6 +579,14 @@ mod tests {
         let node = harness.access_node(button_id).unwrap();
         assert_eq!(node.role(), Role::Button);
         assert_eq!(node.label().as_deref(), Some("Outline"));
+        assert_eq!(node.description(), None);
+
+        harness.edit_root_widget(|mut button| {
+            Button::set_accessible_description(&mut button, Some("Choose a beat first"));
+        });
+        let _ = harness.render();
+        let node = harness.access_node(button_id).unwrap();
+        assert_eq!(node.description().as_deref(), Some("Choose a beat first"));
     }
 
     #[test]
